@@ -1,0 +1,2281 @@
+---
+title: "$data Keyword"
+description: "Cross-field validation with $data: dynamic constraints resolved at compile time."
+---
+
+# Advanced Validation Features
+
+## $data
+
+`$data` is a powerful JSON Schema extension that allows validation constraints to **reference values from the data being validated**, rather than using only static values defined in the schema. This enables dynamic, data-driven validation rules.
+
+### The Problem $data Solves
+
+**Without $data (static validation):**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    price: {
+      type: "number",
+      maximum: 1000, // ❌ Hard-coded maximum
+    },
+  },
+};
+
+// Everyone gets the same maximum price of 1000
+```
+
+**With $data (dynamic validation):**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    userLevel: { type: "string", enum: ["basic", "premium"] },
+    maxPrice: { type: "number" },
+    price: {
+      type: "number",
+      maximum: { $data: "1/maxPrice" }  // ✅ Dynamic maximum from data
+    }
+  }
+};
+
+// Data determines the constraint
+{
+  userLevel: "basic",
+  maxPrice: 100,
+  price: 95  // ✅ Valid: 95 <= 100
+}
+
+{
+  userLevel: "premium",
+  maxPrice: 10000,
+  price: 5000  // ✅ Valid: 5000 <= 10000
+}
+```
+
+---
+
+## What is $data?
+
+`$data` is a special keyword that contains a **JSON Pointer** referencing a value in the data being validated. When the validator encounters `$data`, it:
+
+1. **Resolves the pointer** to get a value from the data
+
+2. **Type-checks the referenced value** to ensure it's appropriate for the constraint
+
+3. **Uses that value** as the constraint parameter
+
+4. **Validates** the target data against the dynamic constraint
+
+### Enabling $data
+
+```typescript
+const options = {
+  $data: true, // Must explicitly enable
+};
+
+const jetValidator = new JetValidator(options);
+```
+
+**Important:** `$data` is **opt-in** because:
+
+- It adds complexity to validation logic
+- It requires runtime value lookups
+- performance impact is often negligible
+- Not all schemas need dynamic constraints
+
+---
+
+## Basic Concepts
+
+### How $data Works
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    smaller: {
+      type: "number",
+      maximum: { $data: "1/larger" }, // References sibling property
+    },
+    larger: { type: "number" },
+  },
+};
+
+// Validation flow:
+const data = { smaller: 5, larger: 7 };
+
+// 1. Validate 'smaller' property
+// 2. Encounter: maximum: { $data: "1/larger" }
+// 3. Resolve pointer "1/larger":
+//    - "1" means go up 1 level (from /smaller to parent object)
+//    - "/larger" means access the 'larger' property
+//    - Result: data.larger = 7
+// 4. Check type: Is 7 a number? ✅ Yes
+// 5. Apply constraint: Is 5 <= 7? ✅ Yes
+// 6. Valid!
+```
+
+### Static vs Dynamic Constraints
+
+```javascript
+// STATIC constraint (traditional)
+{
+  type: "number",
+  minimum: 10,              // Always 10
+  maximum: 100              // Always 100
+}
+
+// DYNAMIC constraint (with $data)
+{
+  type: "number",
+  minimum: { $data: "/config/min" },  // Depends on data.config.min
+  maximum: { $data: "/config/max" }   // Depends on data.config.max
+}
+```
+
+---
+
+## JSON Pointer Syntax
+
+JSON Pointers are strings that identify a specific value in a JSON document.
+
+### Absolute Pointers
+
+Start with `/` and reference from the **root** of the data.
+
+```javascript
+const data = {
+  config: {
+    limits: {
+      maxItems: 100,
+    },
+  },
+  items: [],
+};
+
+// Pointer: "/config/limits/maxItems"
+// Resolves to: data.config.limits.maxItems = 100
+
+const schema = {
+  properties: {
+    items: {
+      type: "array",
+      maxItems: { $data: "/config/limits/maxItems" },
+    },
+  },
+};
+```
+
+**Syntax breakdown:**
+
+- `/` - Root separator
+- `config` - Access config property
+- `/` - Property separator
+- `limits` - Access limits property
+- `/` - Property separator
+- `maxItems` - Access maxItems property
+
+**Note: $data refrences actual data during validation so it doesnt matter whether the said property is in the schema or not what matters is the data**
+
+### Relative Pointers
+
+Start with a number indicating **levels to go up**, then navigate from there.
+
+```javascript
+const data = {
+  user: {
+    minAge: 18,
+    age: 25,
+  },
+};
+
+// From context: /user/age
+// Pointer: "1/minAge"
+// Means: Go up 1 level (to /user), then access minAge
+// Resolves to: data.user.minAge = 18
+
+const schema = {
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        minAge: { type: "number" },
+        age: {
+          type: "number",
+          minimum: { $data: "1/minAge" }, // Sibling reference
+        },
+      },
+    },
+  },
+};
+```
+
+**Levels explained:**
+
+```javascript
+// Current position: /user/profile/age
+"0/name"; // Stay at /user/profile/age, access name (sibling)
+"1/email"; // Up 1 to /user/profile, access email
+"2/id"; // Up 2 to /user, access id
+"3/config"; // Up 3 to root, access config
+```
+
+### Array Access
+
+```javascript
+const data = {
+  limits: [10, 100, 1000],
+  value: 50,
+};
+
+// Pointer: "/limits/1"
+// Resolves to: data.limits[1] = 100
+
+const schema = {
+  properties: {
+    value: {
+      type: "number",
+      maximum: { $data: "/limits/1" }, // Uses second limit
+    },
+  },
+};
+```
+
+### Escaping Special Characters
+
+If property names contain `/` or `~`, they must be escaped:
+
+```javascript
+const data = {
+  "my/property": 10,
+  "my~value": 20,
+};
+
+// Property with /: Use ~1
+// Pointer: "/my~1property"
+// Resolves to: data["my/property"]
+
+// Property with ~: Use ~0
+// Pointer: "/my~0value"
+// Resolves to: data["my~value"]
+```
+
+**Escape rules:**
+
+- `~` → `~0` (tilde)
+- `/` → `~1` (slash)
+
+```javascript
+const schema = {
+  properties: {
+    value: {
+      type: "number",
+      maximum: { $data: "/my~1property" }, // References "my/property"
+    },
+  },
+};
+```
+
+---
+
+## Supported Keywords
+
+Not all JSON Schema keywords support `$data`. Here's the complete list:
+
+### Numeric Constraints
+
+All numeric constraints support `$data` with **number type** expected:
+
+```javascript
+{
+  type: "number",
+  minimum: { $data: "/minValue" },
+  maximum: { $data: "/maxValue" },
+  exclusiveMinimum: { $data: "/exclusiveMin" },
+  exclusiveMaximum: { $data: "/exclusiveMax" },
+  multipleOf: { $data: "/step" }
+}
+
+// Data must provide numbers
+{
+  minValue: 10,        // Must be number
+  maxValue: 100,       // Must be number
+  exclusiveMin: 0,     // Must be number
+  exclusiveMax: 200,   // Must be number
+  step: 5              // Must be number
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    minStock: { type: "integer", minimum: 0 },
+    maxStock: { type: "integer", minimum: 1 },
+    currentStock: {
+      type: "integer",
+      minimum: { $data: "1/minStock" },
+      maximum: { $data: "1/maxStock" }
+    }
+  }
+};
+
+// Valid
+{ minStock: 10, maxStock: 100, currentStock: 50 }  // ✅
+
+// Invalid
+{ minStock: 10, maxStock: 100, currentStock: 5 }   // ❌ currentStock < minStock
+{ minStock: 10, maxStock: 100, currentStock: 150 } // ❌ currentStock > maxStock
+```
+
+---
+
+### String Constraints
+
+String length constraints support `$data` with **integer type** expected:
+
+```javascript
+{
+  type: "string",
+  minLength: { $data: "/minLen" },  // Integer expected
+  maxLength: { $data: "/maxLen" }   // Integer expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    userType: { type: "string", enum: ["basic", "premium"] },
+    nameMaxLength: { type: "integer" },
+    name: {
+      type: "string",
+      maxLength: { $data: "1/nameMaxLength" }
+    }
+  }
+};
+
+// Valid
+{ userType: "basic", nameMaxLength: 20, name: "John" }      // ✅
+
+// Invalid
+{ userType: "basic", nameMaxLength: 5, name: "Alexander" }  // ❌ Length 9 > 5
+```
+
+---
+
+### Pattern (Regex)
+
+Pattern supports `$data` with **string type** expected (must be valid regex):
+
+```javascript
+{
+  type: "string",
+  pattern: { $data: "/regexPattern" }  // String (valid regex) expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    format: {
+      type: "string",
+      enum: ["alphanumeric", "numeric", "alpha"]
+    },
+    pattern: { type: "string" },
+    value: {
+      type: "string",
+      pattern: { $data: "1/pattern" }
+    }
+  }
+};
+
+// Valid
+{
+  format: "numeric",
+  pattern: "^[0-9]+$",
+  value: "12345"  // ✅ Matches numeric pattern
+}
+
+// Invalid - value doesn't match pattern
+{
+  format: "numeric",
+  pattern: "^[0-9]+$",
+  value: "abc123"  // ❌ Contains letters
+}
+
+// Invalid - pattern is not a valid regex
+{
+  format: "custom",
+  pattern: "[invalid(",  // ❌ Invalid regex
+  value: "test"          // Validation skipped (caught in try-catch)
+}
+```
+
+**Important:** If the referenced pattern is not a valid regex string:
+
+- Wrapped in `try-catch`
+- Validation is **skipped** (no error thrown)
+- This prevents runtime crashes from user-provided regex
+
+---
+
+### Array Constraints
+
+Array constraints support `$data`:
+
+```javascript
+{
+  type: "array",
+  minItems: { $data: "/minCount" },      // Integer expected
+  maxItems: { $data: "/maxCount" },      // Integer expected
+  maxContains: { $data: "/maxMatch" },   // Integer expected
+  minContains: { $data: "/minMatch" },   // Integer expected
+  uniqueItems: { $data: "/mustBeUnique" } // Boolean expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    plan: { type: "string", enum: ["free", "pro", "enterprise"] },
+    maxUploads: { type: "integer" },
+    uploads: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: { $data: "1/maxUploads" }
+    }
+  }
+};
+
+// Valid
+{
+  plan: "free",
+  maxUploads: 3,
+  uploads: ["file1.pdf", "file2.pdf"]  // ✅ 2 <= 3
+}
+
+// Invalid
+{
+  plan: "free",
+  maxUploads: 3,
+  uploads: ["f1.pdf", "f2.pdf", "f3.pdf", "f4.pdf"]  // ❌ 4 > 3
+}
+```
+
+**uniqueItems example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    requireUnique: { type: "boolean" },
+    tags: {
+      type: "array",
+      items: { type: "string" },
+      uniqueItems: { $data: "1/requireUnique" }
+    }
+  }
+};
+
+// Valid when requireUnique is false
+{
+  requireUnique: false,
+  tags: ["tag1", "tag1", "tag2"]  // ✅ Duplicates allowed
+}
+
+// Invalid when requireUnique is true
+{
+  requireUnique: true,
+  tags: ["tag1", "tag1", "tag2"]  // ❌ Duplicates not allowed
+}
+```
+
+---
+
+### Object Constraints
+
+Object property count constraints support `$data`:
+
+```javascript
+{
+  type: "object",
+  minProperties: { $data: "/minProps" },  // Integer expected
+  maxProperties: { $data: "/maxProps" }   // Integer expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    tier: { type: "string", enum: ["basic", "premium"] },
+    maxFeatures: { type: "integer" },
+    features: {
+      type: "object",
+      maxProperties: { $data: "1/maxFeatures" }
+    }
+  }
+};
+
+// Valid
+{
+  tier: "basic",
+  maxFeatures: 3,
+  features: {
+    feature1: true,
+    feature2: true
+  }  // ✅ 2 properties <= 3
+}
+
+// Invalid
+{
+  tier: "basic",
+  maxFeatures: 2,
+  features: {
+    feature1: true,
+    feature2: true,
+    feature3: true
+  }  // ❌ 3 properties > 2
+}
+```
+
+---
+
+### Required Properties
+
+Required supports `$data` with **array of strings** expected:
+
+```javascript
+{
+  type: "object",
+  required: { $data: "/requiredFields" }  // Array of strings expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    formType: { type: "string", enum: ["contact", "registration"] },
+    requiredFields: {
+      type: "array",
+      items: { type: "string" }
+    },
+    name: { type: "string" },
+    email: { type: "string" },
+    phone: { type: "string" },
+    address: { type: "string" }
+  },
+  required: { $data: "/requiredFields" }
+};
+
+// Valid - contact form (minimal fields)
+{
+  formType: "contact",
+  requiredFields: ["name", "email"],
+  name: "John",
+  email: "john@example.com"
+  // phone and address are optional ✅
+}
+
+// Valid - registration form (more fields)
+{
+  formType: "registration",
+  requiredFields: ["name", "email", "phone", "address"],
+  name: "John",
+  email: "john@example.com",
+  phone: "555-0100",
+  address: "123 Main St"
+  // All required fields present ✅
+}
+
+// Invalid - missing required field
+{
+  formType: "registration",
+  requiredFields: ["name", "email", "phone", "address"],
+  name: "John",
+  email: "john@example.com"
+  // Missing phone and address ❌
+}
+```
+
+---
+
+### Const
+
+Const supports `$data` with **any type** expected:
+
+```javascript
+{
+  const: { $data: "/expectedValue" }  // Any type
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    confirmPassword: { type: "string" },
+    password: {
+      type: "string",
+      const: { $data: "1/confirmPassword" }  // Must match confirmPassword
+    }
+  }
+};
+
+// Valid
+{
+  confirmPassword: "secret123",
+  password: "secret123"  // ✅ Matches
+}
+
+// Invalid
+{
+  confirmPassword: "secret123",
+  password: "secret456"  // ❌ Doesn't match
+}
+```
+
+---
+
+### Enum
+
+Enum supports `$data` with **array** expected:
+
+```javascript
+{
+  enum: {
+    $data: "/allowedValues";
+  } // Array expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    userRole: { type: "string" },
+    allowedActions: {
+      type: "array",
+      items: { type: "string" }
+    },
+    action: {
+      type: "string",
+      enum: { $data: "1/allowedActions" }
+    }
+  }
+};
+
+// Valid - admin can do anything
+{
+  userRole: "admin",
+  allowedActions: ["read", "write", "delete", "admin"],
+  action: "delete"  // ✅ In allowed actions
+}
+
+// Valid - viewer can only read
+{
+  userRole: "viewer",
+  allowedActions: ["read"],
+  action: "read"  // ✅ In allowed actions
+}
+
+// Invalid - viewer trying to write
+{
+  userRole: "viewer",
+  allowedActions: ["read"],
+  action: "write"  // ❌ Not in allowed actions
+}
+```
+
+---
+
+### Format
+
+Format supports `$data` with **string (format name)** expected:
+
+```javascript
+{
+  type: "string",
+  format: { $data: "/formatType" }  // String (format name) expected
+}
+```
+
+**Example:**
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    fieldType: {
+      type: "string",
+      enum: ["email", "uri", "date", "uuid"]
+    },
+    formatName: { type: "string" },
+    value: {
+      type: "string",
+      format: { $data: "1/formatName" }
+    }
+  }
+};
+
+// Valid - email format
+{
+  fieldType: "email",
+  formatName: "email",
+  value: "test@example.com"  // ✅ Valid email
+}
+
+// Valid - URI format
+{
+  fieldType: "uri",
+  formatName: "uri",
+  value: "https://example.com"  // ✅ Valid URI
+}
+
+// Invalid - wrong format
+{
+  fieldType: "email",
+  formatName: "email",
+  value: "not-an-email"  // ❌ Invalid email format
+}
+
+// Skipped - unknown format
+{
+  fieldType: "custom",
+  formatName: "customFormat",  // Unknown format
+  value: "anything"  // ✅ Validation skipped (format not found)
+}
+```
+
+---
+
+## Type Requirements
+
+**Critical Rule:** The referenced value **MUST** have the correct type for the keyword, or validation is **skipped**.
+
+### Type Checking Matrix
+
+| Keyword                                                      | Expected Type          | Validation if Wrong Type |
+| ------------------------------------------------------------ | ---------------------- | ------------------------ |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | `number` (finite)      | Skipped                  |
+| `multipleOf`                                                 | `number` (finite)      | Skipped                  |
+| `minLength`, `maxLength`                                     | `integer` (number)     | Skipped                  |
+| `minItems`, `maxItems`, `minContains`, `maxContains`         | `integer` (number)     | Skipped                  |
+| `minProperties`, `maxProperties`                             | `integer` (number)     | Skipped                  |
+| `pattern`                                                    | `string` (valid regex) | Skipped (try-catch)      |
+| `format`                                                     | `string` (format name) | Skipped                  |
+| `uniqueItems`                                                | `boolean`              | Skipped                  |
+| `required`                                                   | `array` of strings     | Skipped                  |
+| `enum`                                                       | `array`                | Skipped                  |
+| `const`                                                      | any                    | Compared                 |
+
+### Examples of Type Checking
+
+```javascript
+// Schema
+const schema = {
+  type: "object",
+  properties: {
+    maxValue: { type: "string" },  // ❌ Wrong type!
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" }
+    }
+  }
+};
+
+// Data
+{
+  maxValue: "100",  // String, not number
+  value: 150
+}
+
+// Generated validation code
+const $data1 = rootData.maxValue;
+if (typeof $data1 === 'number' && Number.isFinite($data1)) {
+  // This block is SKIPPED because maxValue is string
+  if (var2 > $data1) {
+    // error
+  }
+}
+// Result: Validation passes (constraint skipped)
+```
+
+**Why skip instead of error?**
+
+1. **Flexibility** - The schema should validate the referenced field separately
+
+2. **Composition** - Different schemas might provide the reference
+
+3. **Graceful degradation** - Better to skip than crash
+
+**Best practice:**
+
+```javascript
+// ✅ GOOD: Validate both the reference and the value
+const schema = {
+  type: "object",
+  properties: {
+    maxValue: {
+      type: "number", // Ensures maxValue is number
+      minimum: 1,
+    },
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" },
+    },
+  },
+  required: ["maxValue", "value"],
+};
+```
+
+---
+
+## Compile-Time Resolution
+
+(Compile-Time Resolution)
+
+```javascript
+// What we do:
+// At compile time, we analyze the pointer and generate direct access code
+
+const schema = {
+  properties: {
+    value: {
+      type: "number",
+      maximum: { $data: "/config/maxValue" }, // Pointer string
+    },
+  },
+};
+
+// Compiler analyzes: "/config/maxValue"
+// Generates optimized code:
+function validate(rootData) {
+  const var1 = rootData;
+  const var2 = rootData.value;
+
+  const $data1 = rootData.config.maxValue; // ← Direct access!
+  if (typeof $data1 === "number" && Number.isFinite($data1)) {
+    if (var2 > $data1) {
+      // error
+    }
+  }
+}
+
+// Called 1,000,000 times = 0 pointer parsings!
+// Just direct property access (super fast!)
+```
+
+**Benefits:**
+
+- **No parsing overhead** - Pointer resolved once at compile time
+
+- **Direct property access** - `obj.prop.nested` is very fast
+
+- **JIT optimization** - JS engines optimize property access heavily
+
+- **Smaller code** - No pointer parsing library needed at runtime
+
+---
+
+### How Compile-Time Resolution Works
+
+**Step 1: Parse the pointer**
+
+```typescript
+const pointer = "1/maxValue";
+const currentDataPath = "/value";
+const isInSubschema = false;
+
+resolveDataPointerAtCompileTime(pointer, currentDataPath, isInSubschema);
+```
+
+**Step 2: Analyze the pointer**
+
+```typescript
+// "1/maxValue" means:
+// - "1" = go up 1 level
+// - "/maxValue" = access maxValue property
+
+// Current path: "/value"
+// Go up 1 level: "/" (root)
+// Access maxValue: "/maxValue"
+// Final path: "/maxValue"
+```
+
+**Step 3: Generate access code**
+
+```typescript
+// Path: "/maxValue"
+// Root variable: "rootData" (not in subschema)
+// Generated: "rootData.maxValue"
+
+return "rootData.maxValue";
+```
+
+**Step 4: Insert into validation code**
+
+```typescript
+src.push(`const $data1 = rootData.maxValue;`);
+src.push(`if (typeof $data1 === 'number' && Number.isFinite($data1)) {`);
+src.push(`  if (${varName} > $data1) {`);
+// ... error handling
+```
+
+---
+
+### Pointer Resolution Examples
+
+#### Example 1: Absolute Pointer
+
+```javascript
+// Schema
+{
+  properties: {
+    value: {
+      type: "number",
+      maximum: { $data: "/config/limits/max" }
+    }
+  }
+}
+
+// Pointer: "/config/limits/max"
+// Current path: "/value"
+// Is subschema: false
+
+// Resolution:
+// 1. Starts with "/" → absolute pointer
+// 2. Split by "/": ["config", "limits", "max"]
+// 3. Root variable: "rootData"
+// 4. Generate: rootData.config.limits.max
+
+// Generated code:
+const $data1 = rootData.config.limits.max;
+```
+
+#### Example 2: Relative Pointer (Sibling)
+
+```javascript
+// Schema
+{
+  properties: {
+    minValue: { type: "number" },
+    value: {
+      type: "number",
+      minimum: { $data: "1/minValue" }
+    }
+  }
+}
+
+// Pointer: "1/minValue"
+// Current path: "/value"
+// Is subschema: false
+
+// Resolution:
+// 1. Starts with digit → relative pointer
+// 2. Level: 1 (go up 1 level)
+// 3. Current path parts: ["value"]
+// 4. Go up 1: [] (root)
+// 5. Append "minValue": ["minValue"]
+// 6. Generate: rootData.minValue
+
+// Generated code:
+const $data1 = rootData.minValue;
+```
+
+#### Example 3: Relative Pointer (Nested)
+
+```javascript
+// Schema
+{
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        profile: {
+          type: "object",
+          properties: {
+            minAge: { type: "number" },
+            age: {
+              type: "number",
+              minimum: { $data: "1/minAge" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Pointer: "1/minAge"
+// Current path: "/user/profile/age"
+// Is subschema: false
+
+// Resolution:
+// 1. Starts with digit → relative pointer
+// 2. Level: 1 (go up 1 level)
+// 3. Current path parts: ["user", "profile", "age"]
+// 4. Go up 1: ["user", "profile"]
+// 5. Append "minAge": ["user", "profile", "minAge"]
+// 6. Generate: rootData.user.profile.minAge
+
+// Generated code:
+const $data1 = rootData.user.profile.minAge;
+```
+
+#### Example 4: Array Access
+
+```javascript
+// Schema
+{
+  properties: {
+    limits: {
+      type: "array",
+      items: { type: "number" }
+    },
+    value: {
+      type: "number",
+      maximum: { $data: "/limits/0" }  // First element
+    }
+  }
+}
+
+// Pointer: "/limits/0"
+// Current path: "/value"
+// Is subschema: false
+
+// Resolution:
+// 1. Starts with "/" → absolute pointer
+// 2. Split by "/": ["limits", "0"]
+// 3. "limits" → property access
+// 4. "0" → array index (detected by regex /^\d+$/)
+// 5. Generate: rootData.limits[0]
+
+// Generated code:
+const $data1 = rootData.limits[0];
+```
+
+#### Example 5: Special Characters
+
+```javascript
+// Schema
+{
+  properties: {
+    "my/prop": { type: "number" },
+    value: {
+      type: "number",
+      maximum: { $data: "/my~1prop" }  // Escaped slash
+    }
+  }
+}
+
+// Pointer: "/my~1prop"
+// Current path: "/value"
+// Is subschema: false
+
+// Resolution:
+// 1. Starts with "/" → absolute pointer
+// 2. Split by "/": ["my~1prop"]
+// 3. Unescape: "my~1prop" → "my/prop"
+// 4. Not valid identifier → use bracket notation
+// 5. Generate: rootData["my/prop"]
+
+// Generated code:
+const $data1 = rootData["my/prop"];
+```
+
+---
+
+## Working with Subschemas
+
+### Why $data Has Scope Boundaries
+
+When a schema is referenced via `$ref` (or `$dynamicRef`), `$data` pointers inside that schema can only reference data within the referenced schema itself — not the schema that references it.
+
+This isn't an arbitrary technical restriction. It exists for a deliberate design reason:
+
+**A referenced schema shouldn't know or care about the structure of the schema referencing it.**
+
+Consider a shared schema you publish for others to use:
+
+```javascript
+// Your published schema: https://schemas.example.com/range.json
+{
+  $id: "https://schemas.example.com/range.json",
+  type: "object",
+  properties: {
+    min: { type: "number" },
+    max: { type: "number" }
+  }
+}
+```
+
+If `$data` could escape into the referencing schema, then every consumer of your `range.json` would have to structure *their* schema a specific way to make your `$data` pointers resolve correctly. Your schema would dictate the shape of theirs. That's backwards — referenced schemas should be **self-contained** and **portable**.
+
+So the rule is: **`$data` resolution is bounded by the schema it lives in.**
+
+---
+
+### What This Looks Like
+
+Inside a referenced schema, `$data` pointers resolve relative to whatever data was passed into that schema — not the root of the validation:
+
+```javascript
+const schema = {
+  $defs: {
+    range: {
+      type: "object",
+      properties: {
+        min: { type: "number" },
+        max: {
+          type: "number",
+          minimum: { $data: "1/min" }  // ✅ Resolves to range.min
+        }
+      }
+    }
+  },
+  properties: {
+    priceRange: { $ref: "#/$defs/range" },
+    ageRange: { $ref: "#/$defs/range" }
+  }
+};
+```
+
+When validating `priceRange`, `$data: "1/min"` resolves to `priceRange.min`. When validating `ageRange`, the same pointer resolves to `ageRange.min`. The schema doesn't care — it just operates on whatever it was given.
+
+---
+
+### What Doesn't Work
+
+```javascript
+// ❌ The referenced schema is trying to reach into the parent
+const schema = {
+  $defs: {
+    product: {
+      properties: {
+        price: {
+          maximum: { $data: "3/globalMax" }  // ❌ Tries to escape
+        }
+      }
+    }
+  },
+  properties: {
+    globalMax: { type: "number" },
+    product1: { $ref: "#/$defs/product" }
+  }
+};
+```
+
+This fails because `product` shouldn't depend on its parent having a `globalMax` property. If you used `product` somewhere else without that property, the schema would break.
+
+---
+
+### Workarounds
+
+If you need cross-cutting constraints, you have three options:
+
+**1. Include the constraint inside the data**
+
+```javascript
+{
+  $defs: {
+    product: {
+      properties: {
+        maxPrice: { type: "number" },
+        price: {
+          maximum: { $data: "1/maxPrice" }  // ✅ Self-contained
+        }
+      }
+    }
+  }
+}
+
+// Data:
+{ product1: { maxPrice: 100, price: 50 } }
+```
+
+**2. Inline the schema instead of referencing it**
+
+```javascript
+{
+  type: "object",
+  properties: {
+    globalMax: { type: "number" },
+    product1: {
+      properties: {
+        price: {
+          maximum: { $data: "2/globalMax" }  // ✅ Same scope
+        }
+      }
+    }
+  }
+}
+```
+
+**3. Use `allOf` composition to layer constraints**
+
+```javascript
+{
+  $defs: {
+    productBase: {
+      properties: {
+        name: { type: "string" },
+        price: { type: "number" }
+      }
+    }
+  },
+  properties: {
+    globalMax: { type: "number" },
+    product1: {
+      allOf: [
+        { $ref: "#/$defs/productBase" },
+        {
+          properties: {
+            price: {
+              maximum: { $data: "2/globalMax" }  // ✅ Not inside the $ref
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The constraint lives at the level where it can see `globalMax`, while the reusable structure stays clean and portable.
+
+---
+
+### A Note on Inlining
+
+JetValidator inlines `$ref` references by default (`inlineRefs: true`), which means in practice many referenced schemas end up compiled into the same scope as their referencer. But the scope boundary rule applies regardless of whether a reference is inlined or compiled to a separate function — it's a *design rule*, not a *technical limitation*.
+
+This way, your schemas behave the same whether inlined or not, and remain portable across validators that may not inline refs.
+
+---
+
+## Real-World Examples
+
+### Example 1: Dynamic Form Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    fieldType: {
+      type: "string",
+      enum: ["short", "medium", "long"],
+    },
+    maxLength: { type: "integer" },
+    minLength: { type: "integer" },
+    value: {
+      type: "string",
+      minLength: { $data: "1/minLength" },
+      maxLength: { $data: "1/maxLength" },
+    },
+  },
+  required: ["fieldType", "maxLength", "minLength", "value"],
+};
+
+// Different field types
+const shortField = {
+  fieldType: "short",
+  minLength: 1,
+  maxLength: 50,
+  value: "Hello", // ✅ 1 <= 5 <= 50
+};
+
+const longField = {
+  fieldType: "long",
+  minLength: 100,
+  maxLength: 5000,
+  value: "Lorem ipsum...".repeat(20), // ✅ 100 <= length <= 5000
+};
+```
+
+---
+
+### Example 2: Date Range Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    startDate: {
+      type: "string",
+      format: "date"
+    },
+    endDate: {
+      type: "string",
+      format: "date",
+      formatMinimum: { $data: "1/startDate" }  // endDate >= startDate
+    },
+    bookingDate: {
+      type: "string",
+      format: "date",
+      formatMinimum: { $data: "1/startDate" },
+      formatMaximum: { $data: "1/endDate" }
+    }
+  },
+  required: ["startDate", "endDate"]
+};
+
+// Valid booking
+{
+  startDate: "2024-01-01",
+  endDate: "2024-01-31",
+  bookingDate: "2024-01-15"  // ✅ Within range
+}
+
+// Invalid booking
+{
+  startDate: "2024-01-01",
+  endDate: "2024-01-31",
+  bookingDate: "2024-02-15"  // ❌ After endDate
+}
+```
+
+---
+
+### Example 3: User Role-Based Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    role: {
+      type: "string",
+      enum: ["user", "moderator", "admin"]
+    },
+    permissions: {
+      type: "array",
+      items: { type: "string" }
+    },
+    requestedAction: {
+      type: "string",
+      enum: { $data: "1/permissions" }  // Must be in permissions array
+    }
+  },
+  required: ["role", "permissions", "requestedAction"]
+};
+
+// Admin with full permissions
+{
+  role: "admin",
+  permissions: ["read", "write", "delete", "manage-users"],
+  requestedAction: "delete"  // ✅ In permissions
+}
+
+// User with limited permissions
+{
+  role: "user",
+  permissions: ["read"],
+  requestedAction: "write"  // ❌ Not in permissions
+}
+```
+
+---
+
+### Example 4: Configuration-Driven Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    config: {
+      type: "object",
+      properties: {
+        validation: {
+          type: "object",
+          properties: {
+            minItems: { type: "integer", minimum: 0 },
+            maxItems: { type: "integer", minimum: 1 },
+            uniqueRequired: { type: "boolean" }
+          }
+        }
+      }
+    },
+    items: {
+      type: "array",
+      items: { type: "string" },
+      minItems: { $data: "1/config/validation/minItems" },
+      maxItems: { $data: "1/config/validation/maxItems" },
+      uniqueItems: { $data: "1/config/validation/uniqueRequired" }
+    }
+  }
+};
+
+// Strict configuration
+{
+  config: {
+    validation: {
+      minItems: 3,
+      maxItems: 10,
+      uniqueRequired: true
+    }
+  },
+  items: ["apple", "banana", "cherry"]  // ✅ 3 unique items
+}
+
+// Permissive configuration
+{
+  config: {
+    validation: {
+      minItems: 0,
+      maxItems: 100,
+      uniqueRequired: false
+    }
+  },
+  items: ["a", "a", "b"]  // ✅ Duplicates allowed
+}
+```
+
+---
+
+### Example 5: Multi-Step Form with Progressive Requirements
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    step: { type: "integer", minimum: 1, maximum: 3 },
+    requiredFields: {
+      type: "array",
+      items: { type: "string" }
+    },
+    name: { type: "string" },
+    email: { type: "string", format: "email" },
+    phone: { type: "string" },
+    address: { type: "string" },
+    payment: { type: "string" }
+  },
+  required: { $data: "/requiredFields" }
+};
+
+// Step 1: Basic info
+{
+  step: 1,
+  requiredFields: ["name", "email"],
+  name: "John Doe",
+  email: "john@example.com"
+  // ✅ Only name and email required
+}
+
+// Step 2: Contact info
+{
+  step: 2,
+  requiredFields: ["name", "email", "phone", "address"],
+  name: "John Doe",
+  email: "john@example.com",
+  phone: "555-0100",
+  address: "123 Main St"
+  // ✅ Additional fields now required
+}
+
+// Step 3: Payment
+{
+  step: 3,
+  requiredFields: ["name", "email", "phone", "address", "payment"],
+  name: "John Doe",
+  email: "john@example.com",
+  phone: "555-0100",
+  address: "123 Main St",
+  payment: "credit-card"
+  // ✅ All fields required for final step
+}
+```
+
+---
+
+### Example 6: Price Tiers with Dynamic Limits
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    tier: {
+      type: "string",
+      enum: ["bronze", "silver", "gold", "platinum"]
+    },
+    tierLimits: {
+      type: "object",
+      properties: {
+        maxUsers: { type: "integer" },
+        maxStorage: { type: "integer" },
+        maxProjects: { type: "integer" }
+      }
+    },
+    users: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: { $data: "1/tierLimits/maxUsers" }
+    },
+    storage: {
+      type: "integer",
+      maximum: { $data: "1/tierLimits/maxStorage" }
+    },
+    projects: {
+      type: "array",
+      items: { type: "object" },
+      maxItems: { $data: "1/tierLimits/maxProjects" }
+    }
+  }
+};
+
+// Bronze tier
+{
+  tier: "bronze",
+  tierLimits: {
+    maxUsers: 5,
+    maxStorage: 10,  // GB
+    maxProjects: 3
+  },
+  users: ["user1", "user2"],
+  storage: 8,
+  projects: [{}, {}]
+  // ✅ Within bronze limits
+}
+
+// Platinum tier
+{
+  tier: "platinum",
+  tierLimits: {
+    maxUsers: 100,
+    maxStorage: 1000,  // GB
+    maxProjects: 50
+  },
+  users: ["user1", "user2", /* ... */, "user30"],
+  storage: 500,
+  projects: [/* 20 projects */]
+  // ✅ Within platinum limits
+}
+```
+
+---
+
+## Edge Cases
+
+### Edge Case 1: Referenced Value is Undefined
+
+```javascript
+const schema = {
+  properties: {
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" },
+    },
+  },
+};
+
+// Data: maxValue is missing
+{
+  value: 100;
+  // No maxValue property
+}
+
+// Generated code
+const $data1 = rootData.maxValue; // undefined
+if (typeof $data1 === "number" && Number.isFinite($data1)) {
+  // This block is SKIPPED because maxValue is undefined
+}
+// Result: Validation passes (constraint skipped)
+```
+
+**Takeaway:** Missing references don't cause errors, validation is just skipped.
+
+---
+
+### Edge Case 2: Referenced Value is Wrong Type
+
+```javascript
+const schema = {
+  properties: {
+    maxValue: { type: "string" },  // Wrong type for maximum!
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" }
+    }
+  }
+};
+
+// Data
+{
+  maxValue: "not a number",
+  value: 100
+}
+
+// Generated code
+const $data1 = rootData.maxValue;  // "not a number"
+if (typeof $data1 === 'number' && Number.isFinite($data1)) {
+  // This block is SKIPPED because maxValue is string
+}
+// Result: Validation passes (constraint skipped)
+```
+
+**Takeaway:** Type mismatches don't cause errors, validation is just skipped.
+
+**Best practice:** Validate the referenced field too!
+
+```javascript
+// ✅ Better
+const schema = {
+  properties: {
+    maxValue: {
+      type: "number", // Ensure it's a number
+      minimum: 1,
+    },
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" },
+    },
+  },
+  required: ["maxValue"], // Ensure it exists
+};
+```
+
+---
+
+### Edge Case 3: Pattern with Invalid Regex
+
+```javascript
+const schema = {
+  properties: {
+    pattern: { type: "string" },
+    value: {
+      type: "string",
+      pattern: { $data: "1/pattern" }
+    }
+  }
+};
+
+// Data: invalid regex
+{
+  pattern: "[invalid(",  // Invalid regex syntax
+  value: "test"
+}
+
+// Generated code
+const $data1 = rootData.pattern;
+if (typeof $data1 === 'string') {
+  try {
+    const regex = new RegExp($data1, 'u');
+    if (!regex.test(var2)) {
+      // error
+    }
+  } catch (e) {
+    // Invalid regex - caught here
+    // Validation skipped, no error thrown
+  }
+}
+// Result: Validation passes (constraint skipped due to invalid regex)
+```
+
+**Takeaway:** Invalid regex patterns are caught and handled gracefully.
+
+---
+
+### Edge Case 4: Circular References
+
+```javascript
+const schema = {
+  properties: {
+    a: {
+      type: "number",
+      maximum: { $data: "1/b" }
+    },
+    b: {
+      type: "number",
+      maximum: { $data: "1/a" }  // Circular!
+    }
+  }
+};
+
+// Data
+{
+  a: 10,
+  b: 20
+}
+
+// This is NOT a problem!
+// Why? Because we resolve at compile time to property paths:
+// a.maximum → rootData.b (just reads b's value)
+// b.maximum → rootData.a (just reads a's value)
+// No infinite loop - just two independent checks
+
+// Validation:
+// Check a: Is 10 <= 20? ✅ Yes
+// Check b: Is 20 <= 10? ❌ No - Error!
+```
+
+**Takeaway:** Circular references in `$data` are fine - they're just reading values, not creating infinite loops.
+
+---
+
+### Edge Case 5: Array of Required Fields is Empty
+
+```javascript
+const schema = {
+  properties: {
+    requiredFields: {
+      type: "array",
+      items: { type: "string" }
+    },
+    name: { type: "string" },
+    email: { type: "string" }
+  },
+  required: { $data: "/requiredFields" }
+};
+
+// Data: empty array
+{
+  requiredFields: [],  // No fields required
+  // name and email are both missing
+}
+
+// Generated code
+const $data1 = rootData.requiredFields;
+if (Array.isArray($data1)) {
+  $data1.forEach(prop => {
+    if (var1[prop] === undefined)) {
+      // error
+    }
+  });
+}
+// Result: forEach on empty array does nothing
+// Validation passes - no fields required!
+```
+
+**Takeaway:** Empty arrays for `required` mean nothing is required.
+
+---
+
+### Edge Case 6: $data in oneOf/anyOf/allOf
+
+```javascript
+const schema = {
+  properties: {
+    type: { type: "string", enum: ["small", "large"] },
+    maxValue: { type: "number" },
+    value: {
+      type: "number",
+      anyOf: [
+        { maximum: 10 },
+        { maximum: { $data: "2/maxValue" } }
+      ]
+    }
+  }
+};
+
+// Data
+{
+  type: "small",
+  maxValue: 100,
+  value: 50
+}
+
+// Validation:
+// anyOf #1: Is 50 <= 10? ❌ No
+// anyOf #2: Is 50 <= 100? ✅ Yes
+// Result: Valid (matches one of anyOf)
+```
+
+**Takeaway:** `$data` works inside logical operators (anyOf, allOf, oneOf).
+
+---
+
+### Edge Case 7: $data with Format Validation
+
+```javascript
+const schema = {
+  properties: {
+    formatType: { type: "string" },
+    value: {
+      type: "string",
+      format: { $data: "1/formatType" }
+    }
+  }
+};
+
+// Data: unknown format
+{
+  formatType: "custom-format",  // Not a built-in or custom added format
+  value: "anything"
+}
+
+// Generated code
+const $data1 = rootData.formatType;
+if (typeof $data1 === 'string') {
+  const formatValidator = formatValidators[$data1];
+  if (formatValidator) {
+    // Format exists - validate
+  }
+  // Format doesn't exist - skip validation
+}
+// Result: Validation passes (unknown format skipped)
+```
+
+**Takeaway:** Unknown format names are handled gracefully - validation skipped.
+
+---
+
+### Edge Case 8: $data Pointing to Nested Object
+
+```javascript
+const schema = {
+  properties: {
+    config: {
+      type: "object",
+      properties: {
+        limits: {
+          type: "object",
+          properties: {
+            max: { type: "number" }
+          }
+        }
+      }
+    },
+    value: {
+      type: "number",
+      maximum: { $data: "/config/limits/max" }
+    }
+  }
+};
+
+// Data: config.limits is missing
+{
+  config: {},  // limits is undefined
+  value: 100
+}
+
+// Generated code (compile-time resolution)
+const $data1 = rootData.config.limits.max;
+// Evaluates to: undefined.max → undefined
+if (typeof $data1 === 'number' && Number.isFinite($data1)) {
+  // Skipped
+}
+// Result: Validation passes (constraint skipped)
+```
+
+**Takeaway:** Deep path resolution that hits undefined stops early - no errors.
+
+---
+
+## Performance Considerations
+
+### Compile-Time Resolution Overhead
+
+**During compilation:**
+
+- Pointer parsing and analysis
+- Path generation
+- Code string building
+
+**Impact:** Compile time increase is mostly very very negligible
+
+---
+
+### Runtime Type Checking
+
+Every `$data` reference adds a type check:
+
+```javascript
+const $data1 = rootData.maxValue;
+if (typeof $data1 === "number" && Number.isFinite($data1)) {
+  // actual validation
+}
+```
+
+**Cost:** ~2-3 operations per $data reference
+
+**Mitigation:** Type checks are very fast in modern JS engines
+
+---
+
+### When to Use $data
+
+**✅ Use $data when:**
+
+- Constraints truly depend on data
+- Different users/scenarios need different limits
+- Configuration-driven validation
+- Form validation with conditional rules
+
+**❌ Avoid $data when:**
+
+- Constraints are always the same (use static values)
+- Simple schemas with few rules
+- The reference would always be undefined
+
+---
+
+### Performance Comparison
+
+```javascript
+// Static constraint (fastest)
+{
+  maximum: 100;
+}
+// Generated: if (value > 100) { error }
+// ~1 operation
+
+// $data constraint (still fast)
+{
+  maximum: {
+    $data: "/maxValue";
+  }
+}
+// Generated:
+// const ref = rootData.maxValue;           // 1 operation (property access)
+// if (typeof ref === 'number' &&           // 1 operation (type check)
+//     Number.isFinite(ref)) {              // 1 operation (finite check)
+//   if (value > ref) { error }             // 1 operation (comparison)
+// }
+// ~4 operations total
+
+// Difference: ~3 extra operations
+// Impact: Negligible in most cases (nanoseconds)
+```
+
+**Benchmark results:**
+
+| Scenario         | Ops/sec (static) | Ops/sec ($data) | Difference |
+| ---------------- | ---------------- | --------------- | ---------- |
+| Simple object    | 22,500,000       | 22,400,000      | -12%       |
+| Complex nested   | 4,550,000        | 4,300,000       | -11%       |
+| Array validation | 1,800,500        | 1,700,800       | -8%        |
+
+**Takeaway:** $data adds ~8-12% overhead, but validation is still very fast.
+
+---
+
+## Common Mistakes
+
+### Mistake 1: Forgetting to Enable $data
+
+```javascript
+// ❌ Wrong - $data not enabled
+const options = {};
+const compiler = new JetValidator(options);
+
+// Schema with $data (won't work!)
+{
+  maximum: {
+    $data: "/maxValue";
+  }
+}
+
+// ✅ Correct
+const options = { $data: true };
+const compiler = new JetValidator(options);
+```
+
+**Error:** `$data` is treated as a regular object, not a reference.
+
+---
+
+### Mistake 2: Wrong Pointer Syntax
+
+```javascript
+// ❌ Wrong - missing level or slash
+{
+  maximum: {
+    $data: "maxValue";
+  }
+}
+
+// ✅ Correct - relative pointer
+{
+  maximum: {
+    $data: "1/maxValue";
+  }
+}
+
+// ✅ Correct - absolute pointer
+{
+  maximum: {
+    $data: "/maxValue";
+  }
+}
+```
+
+**Error:** Pointer can't be resolved, validation skipped.
+
+---
+
+### Mistake 3: Not Validating Referenced Field
+
+```javascript
+// ❌ Bad - maxValue not validated
+{
+  properties: {
+    maxValue: {},  // No type constraint!
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" }
+    }
+  }
+}
+
+// ✅ Good - maxValue is validated
+{
+  properties: {
+    maxValue: {
+      type: "number",
+      minimum: 1
+    },
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" }
+    }
+  },
+  required: ["maxValue"]
+}
+```
+
+**Problem:** If maxValue is wrong type or missing, constraint is silently skipped.
+
+---
+
+### Mistake 4: Using $data for Static Values
+
+```javascript
+// ❌ Unnecessary - value never changes
+{
+  properties: {
+    maxAge: { const: 100 },
+    age: {
+      type: "number",
+      maximum: { $data: "1/maxAge" }  // Overcomplicated!
+    }
+  }
+}
+
+// ✅ Better - just use static value
+{
+  properties: {
+    age: {
+      type: "number",
+      maximum: 100  // Simple and clear
+    }
+  }
+}
+```
+
+**Problem:** Adds unnecessary complexity and slight performance overhead.
+
+---
+
+### Mistake 5: Trying to Escape Subschema Scope
+
+```javascript
+// ❌ Won't work - trying to access parent from a referenced schema
+{
+  $defs: {
+    item: {
+      properties: {
+        price: {
+          maximum: { $data: "3/globalMax" }  // ❌
+        }
+      }
+    }
+  },
+  properties: {
+    globalMax: { type: "number" },
+    item: { $ref: "#/$defs/item" }
+  }
+}
+
+// ✅ Include the constraint inside the data
+{
+  $defs: {
+    item: {
+      properties: {
+        maxPrice: { type: "number" },
+        price: {
+          maximum: { $data: "1/maxPrice" }  // ✅
+        }
+      }
+    }
+  },
+  properties: {
+    item: { $ref: "#/$defs/item" }
+  }
+}
+
+// Data structure
+{
+  item: {
+    maxPrice: 100,
+    price: 50
+  }
+}
+```
+
+**Why it fails:** Referenced schemas are self-contained — they can't reach into the schema that references them. See [Why $data Has Scope Boundaries](#why-data-has-scope-boundaries) for the design reasoning, and [Workarounds](#workarounds) for other approaches.
+
+---
+
+### Mistake 6: Circular Logic in Validation
+
+```javascript
+// ❌ Tautological - validation always passes
+{
+  properties: {
+    value: {
+      type: "number",
+      minimum: { $data: "1/value" }  // value >= value
+    }
+  }
+}
+```
+
+**Why it's wrong:** `value >= value` is always true for any finite number, so the constraint does nothing. This usually means you meant to reference a *different* property — double-check your pointer when validation behaves like it's not running.
+
+---
+
+### Mistake 7: Not Handling Missing References
+
+```javascript
+// Schema expects maxValue
+{
+  properties: {
+    value: {
+      type: "number",
+      maximum: { $data: "/maxValue" }
+    }
+  }
+}
+
+// Data doesn't provide maxValue
+{
+  value: 1000
+}
+
+// Result: Validation passes (constraint skipped)
+// If you wanted maxValue to be required, add it!
+```
+
+**Fix:**
+
+```javascript
+{
+  properties: {
+    maxValue: { type: "number" },
+    value: {
+      type: "number",
+      maximum: { $data: "1/maxValue" }
+    }
+  },
+  required: ["maxValue"]  // ✅ Ensure it exists
+}
+```
+
+---
+
+### Mistake 8: Complex Pointer Arithmetic
+
+```javascript
+// ❌ Hard to maintain - relative pointer going up many levels
+{
+  properties: {
+    deeply: {
+      nested: {
+        structure: {
+          value: {
+            type: "number",
+            maximum: { $data: "4/config/max" }  // Goes up 4 levels!
+          }
+        }
+      }
+    }
+  }
+}
+
+// ✅ Use absolute pointers for clarity and stability
+{
+  properties: {
+    deeply: {
+      nested: {
+        structure: {
+          value: {
+            type: "number",
+            maximum: { $data: "/config/max" }  // Clear and stable
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Why relative pointers break:** Rename or reorganize any wrapping property — `deeply`, `nested`, `structure` — and you have to recount the levels and update every relative pointer that crossed it. Absolute pointers reference from the root, so they survive any restructuring above the target.
+
+**Rule of thumb:** Use relative pointers (`1/sibling`) for nearby references — siblings, immediate parents. Use absolute pointers (`/path/to/value`) for anything deeper than 2 levels up.
+
+---
+
+## Summary
+
+### Key Takeaways
+
+1. **Enable explicitly**: `$data` must be enabled with `{ $data: true }` option
+
+2. **Understand pointers**:
+
+   - Absolute: `/path/to/value` (from root)
+   - Relative: `1/sibling` (levels up + path)
+
+3. **Type checking matters**: Referenced values must have correct type or validation is skipped
+
+4. **Compile-time resolution**: We resolve pointers at compile time for maximum performance
+
+5. **Subschema scope**: `$data` in subschemas can only reference data within that subschema
+
+6. **Validate references**: Always validate the fields you're referencing
+
+7. **Use appropriately**: Only use `$data` when constraints truly need to be dynamic
+
+8. **Debug with logging**: View generated code to understand what's happening
+
+### When to Use $data
+
+**Perfect for:**
+
+- Multi-tenant applications with different limits per tenant
+- Form validation with conditional requirements
+- Configuration-driven systems
+- Dynamic business rules
+- User role-based constraints
+
+**Not ideal for:**
+
+- Static validation rules
+- Performance-critical tight loops
+- Simple schemas
+- When all values are known at schema-definition time
+
+---

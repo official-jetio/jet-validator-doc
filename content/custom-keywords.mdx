@@ -1,0 +1,2233 @@
+---
+title: "Custom Keywords"
+description: "Extend jet-validator with macro, compile, validate, and code keyword types."
+---
+
+# Custom Keywords in JetValidator
+
+**Extend JSON Schema with your own validation logic.**
+
+---
+
+## Overview
+
+JetValidator supports **four types of custom keywords**, each optimized for different use cases and performance characteristics.
+
+### The Four Keyword Types
+
+| Type         | Runs When                    | Returns             | Best For                                           |
+| ------------ | ---------------------------- | ------------------- | -------------------------------------------------- |
+| **macro**    | Schema resolution (once)     | New schema          | Schema shortcuts, DRY principles                   |
+| **compile**  | Schema compilation (once)    | Validation function | Pre-compiled logic with closures, async validation |
+| **validate** | Data validation (every time) | Boolean or error    | Simple runtime checks, async validation            |
+| **code**     | Code generation (once)       | Code string         | Maximum performance (⚠️ trusted sources only)      |
+
+---
+
+## Type Definitions
+
+```typescript
+interface KeywordDefinition {
+  keyword: string;
+  type?: SchemaType;
+  schemaType?: SchemaType;
+  implements?: string | string[];
+  metaSchema?: SchemaDefinition;
+}
+
+interface MacroKeywordDefinition extends KeywordDefinition {
+  macro: MacroFunction;
+}
+
+interface CompileKeywordDefinition extends KeywordDefinition {
+  compile: CompileFunction;
+}
+
+interface ValidateKeywordDefinition extends KeywordDefinition {
+  validate: ValidateFunction;
+}
+
+interface CodeKeywordDefinition extends KeywordDefinition {
+  code: CodeFunction;
+}
+```
+
+### Understanding the Options
+
+- **`keyword`**: The name of your custom keyword (e.g., `'range'`, `'email'`)
+- **`type`**: The **data type** this keyword applies to (e.g., `'number'`, `'string'`, `'object'`)
+- **`schemaType`**: The expected **type of the keyword's value** in the schema (e.g., if `range: [5, 10]`, schemaType is `'array'`)
+- **`implements`**: Other keywords this keyword handles (those keywords will be removed after processing)
+- **`metaSchema`**: A JSON Schema to validate the keyword's value in the schema
+
+### Example: `type` vs `schemaType`
+
+```typescript
+validator.addKeyword({
+  keyword: 'range',
+  type: 'number',           // ← Applies to number data
+  schemaType: 'array',      // ← Keyword value must be an array
+  compile: (value) => {
+    const [min, max] = value;
+    return (data) => data >= min && data <= max || { message: `Must be between ${min} and ${max}` };
+  }
+});
+
+// Valid schema:
+{ type: 'number', range: [5, 10] }  // ✅ schemaType is array
+{ value: 6 } // ✅ type is number
+
+// Invalid schema:
+{ type: 'number', range: 5 }  // ❌ schemaType must be array
+{ value: "ok" } // ❌ type is not a number
+```
+
+---
+
+## 1. MACRO Keywords
+
+**Transforms your custom keyword into standard JSON Schema keywords during schema resolution.**
+
+### Type Signature
+
+```typescript
+type MacroFunction<TValue = unknown> = (
+  schemaValue: TValue,
+  parentSchema: SchemaDefinition,
+  context?: MacroContext,
+) => SchemaDefinition | boolean;
+
+interface MacroContext {
+  schemaPath: string;
+  rootSchema: SchemaDefinition;
+  opts: ValidatorOptions;
+}
+```
+
+### How It Works
+
+1. User writes schema with custom keyword
+2. During resolution, macro function is called
+3. Returns standard JSON Schema
+4. Standard schema is validated normally
+
+### Example 1: Basic Range
+
+```typescript
+validator.addKeyword({
+  keyword: "range",
+  type: "number",
+  schemaType: "array",
+  macro: (schemaValue, parentSchema) => {
+    const [min, max] = schemaValue;
+
+    return {
+      minimum: min,
+      maximum: max,
+    };
+  },
+});
+
+const schema = {
+  type: "number",
+  range: [5, 10],
+};
+
+const validate = validator.compile(schema);
+validate(7); // ✅ true
+validate(3); // ❌ false
+validate(15); // ❌ false
+```
+
+### Example 2: Using metaSchema for Validation
+
+```typescript
+validator.addKeyword({
+  keyword: 'range',
+  type: 'number',
+  schemaType: 'array',
+  metaSchema: {
+    type: 'array',
+    items: { type: 'number' },
+    minItems: 2,
+    maxItems: 2
+  },
+  macro: (schemaValue, parentSchema) => {
+    const [min, max] = schemaValue;
+
+    if (min >= max) {
+      throw new Error('range: min must be less than max');
+    }
+
+    return {
+      minimum: min,
+      maximum: max
+    };
+  }
+});
+
+// Valid:
+{ type: 'number', range: [5, 10] }  // ✅
+
+// Invalid (caught by metaSchema):
+{ type: 'number', range: [5] }  // ❌ Too few items
+{ type: 'number', range: ['a', 'b'] }  // ❌ Not numbers
+{ type: 'number', range: 'invalid' }  // ❌ Not an array
+```
+
+### Example 3: Using Parent Schema with implements
+
+```typescript
+validator.addKeyword({
+  keyword: "range",
+  type: "number",
+  schemaType: "array",
+  implements: "exclusive",
+  metaSchema: {
+    type: "array",
+    items: { type: "number" },
+    minItems: 2,
+    maxItems: 2,
+  },
+  macro: (schemaValue, parentSchema) => {
+    const [min, max] = schemaValue;
+
+    if (parentSchema.exclusive === true) {
+      return {
+        exclusiveMinimum: min,
+        exclusiveMaximum: max,
+      };
+    } else {
+      return {
+        minimum: min,
+        maximum: max,
+      };
+    }
+  },
+});
+
+const schema1 = {
+  type: "number",
+  range: [5, 10],
+};
+// Expands to: { type: 'number', minimum: 5, maximum: 10 }
+
+const validate1 = validator.compile(schema1);
+validate1(5); // ✅ true
+validate1(10); // ✅ true
+
+const schema2 = {
+  type: "number",
+  range: [5, 10],
+  exclusive: true,
+};
+// Expands to: { type: 'number', exclusiveMinimum: 5, exclusiveMaximum: 10 }
+// 'exclusive' keyword is removed
+
+const validate2 = validator.compile(schema2);
+validate2(5); // ❌ false
+validate2(5.1); // ✅ true
+validate2(10); // ❌ false
+```
+
+### Example 4: Complex Transformation
+
+```typescript
+validator.addKeyword({
+  keyword: "positiveInteger",
+  type: "integer",
+  schemaType: "boolean",
+  macro: (schemaValue, parentSchema) => {
+    if (schemaValue === false) return parentSchema;
+
+    return {
+      type: "integer",
+      minimum: 1,
+    };
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    id: { positiveInteger: true },
+    count: { positiveInteger: true },
+    offset: { positiveInteger: false },
+  },
+};
+
+const validate = validator.compile(schema);
+validate({ id: 5, count: 10, offset: -5 }); // ✅ true
+validate({ id: 0, count: 10, offset: -5 }); // ❌ false
+```
+
+### When to Use Macro
+
+✅ **Use macro when:**
+
+- Creating schema shortcuts
+- Transforming to multiple standard keywords
+- Schema reusability across projects
+- Portability is important
+
+❌ **Don't use macro when:**
+
+- Need access to actual data during validation
+- Need cross-field validation
+- Need async operations
+
+---
+
+## 2. COMPILE Keywords
+
+**Returns a validation function during compilation. The function runs every time data is validated.**
+
+### Type Signature
+
+```typescript
+type CompileFunction<TValue = unknown, TData = unknown, TRootData = unknown> = (
+  schemaValue: TValue,
+  parentSchema: SchemaDefinition,
+  context: CompileContext,
+) => CompiledValidateFunction<TData, TRootData>;
+
+interface CompileContext {
+  schemaPath: string;
+  rootSchema: SchemaDefinition;
+  opts: ValidatorOptions;
+}
+
+type CompiledValidateFunction<TData = unknown, TRootData = unknown> = (
+  data: TData,
+  rootData: TRootData,
+  dataPath: string,
+) =>
+  | boolean
+  | KeywordValidationError
+  | Promise<boolean | KeywordValidationError>;
+
+interface ValidationError {
+  message: string;
+  [key: string]: any;
+}
+```
+
+**Note:** The compiler automatically adds `dataPath`, `schemaPath`, `rule`, and `value` to errors. You only need to provide `message`.
+
+### How It Works
+
+1. During compilation, compile function is called **once**
+2. Returns a validation function (captures schema values in closure)
+3. During validation, returned function is called for each data item
+4. Validation function has access to current data, root data, and data path
+5. **Supports async validation** by returning a Promise
+
+### Example 1: Basic Even Number
+
+```typescript
+validator.addKeyword({
+  keyword: "even",
+  type: "number",
+  schemaType: "boolean",
+  compile: (schemaValue, parentSchema, context) => {
+    if (!schemaValue) {
+      return () => true;
+    }
+
+    return (data, rootData, dataPath) => {
+      if (data % 2 !== 0) {
+        return {
+          message: "Number must be even",
+        };
+      }
+      return true;
+    };
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    a: { type: "number", even: true },
+    b: { type: "number", even: true },
+    c: { type: "number", even: false },
+  },
+};
+
+const validate = validator.compile(schema);
+
+validate({ a: 4, b: 6, c: 5 }); // ✅ true
+validate({ a: 5, b: 6, c: 5 }); // ❌ false
+```
+
+### Example 2: Using metaSchema with Compile
+
+```typescript
+validator.addKeyword({
+  keyword: 'divisibleBy',
+  type: 'number',
+  schemaType: 'number',
+  metaSchema: {
+    type: 'number',
+    exclusiveMinimum: 0
+  },
+  compile: (schemaValue, parentSchema, context) => {
+    const divisor = schemaValue;
+
+    return (data, rootData, dataPath) => {
+      if (data % divisor !== 0) {
+        return {
+          message: `Must be divisible by ${divisor}`
+        };
+      }
+      return true;
+    };
+  }
+});
+
+// Valid:
+{ type: 'number', divisibleBy: 3 }  // ✅
+
+// Invalid (caught by metaSchema):
+{ type: 'number', divisibleBy: 0 }  // ❌ Must be > 0
+{ type: 'number', divisibleBy: -5 }  // ❌ Must be > 0
+{ type: 'number', divisibleBy: 'invalid' }  // ❌ Not a number
+```
+
+### Example 3: Cross-Field Validation
+
+```typescript
+validator.addKeyword({
+  keyword: "matchesField",
+  type: "string",
+  schemaType: "string",
+  compile: (fieldPath, parentSchema, context) => {
+    return (data, rootData, dataPath) => {
+      const compareValue = rootData[fieldPath];
+
+      if (compareValue === undefined) {
+        return {
+          message: `Field '${fieldPath}' not found for comparison`,
+        };
+      }
+
+      if (data !== compareValue) {
+        return {
+          message: `Must match '${fieldPath}'`,
+        };
+      }
+
+      return true;
+    };
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    password: {
+      type: "string",
+      minLength: 8,
+    },
+    confirmPassword: {
+      type: "string",
+      matchesField: "password",
+    },
+  },
+  required: ["password", "confirmPassword"],
+};
+
+const validate = validator.compile(schema);
+
+validate({
+  password: "secret123",
+  confirmPassword: "secret123",
+}); // ✅ true
+
+validate({
+  password: "secret123",
+  confirmPassword: "different",
+}); // ❌ false
+```
+
+### Example 4: Async Validation
+
+```typescript
+validator.addKeyword({
+  keyword: "uniqueEmail",
+  type: "string",
+  schemaType: "object",
+  async: true,
+  metaSchema: {
+    type: "object",
+    properties: {
+      apiUrl: { type: "string", format: "uri" },
+    },
+    required: ["apiUrl"],
+  },
+  compile: (config, parentSchema, context) => {
+    return async (data, rootData, dataPath) => {
+      try {
+        const response = await fetch(
+          `${config.apiUrl}?email=${encodeURIComponent(data)}`,
+        );
+        const result = await response.json();
+
+        if (result.exists) {
+          return {
+            message: "This email is already registered",
+          };
+        }
+
+        return true;
+      } catch (error) {
+        return {
+          message: "Unable to verify email uniqueness",
+        };
+      }
+    };
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      format: "email",
+      uniqueEmail: {
+        apiUrl: "https://api.example.com/check-email",
+      },
+    },
+  },
+};
+
+const validate = validator.compile(schema);
+
+await validate({ email: "user@example.com" });
+```
+
+### Example 5: Conditional Validation
+
+```typescript
+validator.addKeyword({
+  keyword: "requiredIf",
+  schemaType: "object",
+  metaSchema: {
+    type: "object",
+    properties: {
+      field: { type: "string" },
+      value: {},
+    },
+    required: ["field", "value"],
+  },
+  compile: (condition, parentSchema, context) => {
+    const { field, value } = condition;
+
+    return (data, rootData, dataPath) => {
+      if (rootData[field] === value) {
+        if (data === undefined || data === null || data === "") {
+          return {
+            message: `This field is required when '${field}' is '${value}'`,
+          };
+        }
+      }
+
+      return true;
+    };
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    country: { type: "string" },
+    state: {
+      type: "string",
+      requiredIf: { field: "country", value: "USA" },
+    },
+    zipCode: {
+      type: "string",
+      requiredIf: { field: "country", value: "USA" },
+    },
+  },
+};
+
+const validate = validator.compile(schema);
+
+validate({ country: "USA", state: "CA", zipCode: "90210" }); // ✅ true
+validate({ country: "USA", state: "CA" }); // ❌ false
+validate({ country: "Canada" }); // ✅ true
+```
+
+### When to Use Compile
+
+✅ **Use compile when:**
+
+- Need access to other fields (rootData)
+- Schema values should be captured in closures
+- Need async validation
+- Good balance of performance and flexibility
+
+❌ **Don't use compile when:**
+
+- Simple validation without state (use validate instead)
+- Need maximum performance (use code instead)
+
+---
+
+## 3. VALIDATE Keywords
+
+**Simple validation function that runs every time data is validated. No compilation step.**
+
+### Type Signature
+
+```typescript
+type ValidateFunction<
+  TValue = unknown,
+  TData = unknown,
+  TRootData = unknown,
+> = (
+  schemaValue: TValue,
+  data: TData,
+  parentSchema: SchemaDefinition,
+  dataContext: ValidateDataContext<TRootData>,
+) =>
+  | boolean
+  | KeywordValidationError
+  | Promise<boolean | KeywordValidationError>;
+
+interface ValidateDataContext<TRootData = unknown> {
+  dataPath: string;
+  rootData: TRootData;
+  schemaPath: string;
+  parentData?: unknown;
+  parentDataProperty?: string | number;
+}
+
+interface ValidationError {
+  message: string;
+  [key: string]: any;
+}
+```
+
+**Note:** The compiler automatically adds `dataPath`, `schemaPath`, `rule`, and `value` to errors. You only need to provide `message`.
+
+### How It Works
+
+1. No compilation step - function stored as-is
+2. During validation, function is called directly
+3. Has full access to all context information
+4. Simpler to write but slightly slower than compile
+5. **Supports async validation** by returning a Promise
+
+### Example 1: Basic Divisibility
+
+```typescript
+validator.addKeyword({
+  keyword: "divisibleBy",
+  type: "number",
+  schemaType: "number",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    if (data % schemaValue !== 0) {
+      return {
+        message: `Must be divisible by ${schemaValue}`,
+      };
+    }
+
+    return true;
+  },
+});
+
+const schema = {
+  type: "number",
+  divisibleBy: 3,
+};
+
+const validate = validator.compile(schema);
+
+validate(9); // ✅ true
+validate(10); // ❌ false
+validate(12); // ✅ true
+```
+
+### Example 2: Using metaSchema with Validate
+
+```typescript
+validator.addKeyword({
+  keyword: 'inRange',
+  type: 'number',
+  schemaType: 'object',
+  metaSchema: {
+    type: 'object',
+    properties: {
+      min: { type: 'number' },
+      max: { type: 'number' }
+    },
+    required: ['min', 'max']
+  },
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    const { min, max } = schemaValue;
+
+    if (data < min || data > max) {
+      return {
+        message: `Must be between ${min} and ${max}`
+      };
+    }
+
+    return true;
+  }
+});
+
+// Valid:
+{ type: 'number', inRange: { min: 5, max: 10 } }  // ✅
+
+// Invalid (caught by metaSchema):
+{ type: 'number', inRange: { min: 5 } }  // ❌ Missing 'max'
+{ type: 'number', inRange: [5, 10] }  // ❌ Not an object
+```
+
+### Example 3: Using Parent Data
+
+```typescript
+validator.addKeyword({
+  keyword: "uniqueInParent",
+  schemaType: "boolean",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    if (!schemaValue) return true;
+
+    const { parentData } = dataContext;
+
+    if (!Array.isArray(parentData)) {
+      return true;
+    }
+
+    const occurrences = parentData.filter((item) => item === data).length;
+
+    if (occurrences > 1) {
+      return {
+        message: `Value '${data}' must be unique in array`,
+      };
+    }
+
+    return true;
+  },
+});
+
+const schema = {
+  type: "array",
+  items: {
+    type: "string",
+    uniqueInParent: true,
+  },
+};
+
+const validate = validator.compile(schema);
+
+validate(["a", "b", "c"]); // ✅ true
+validate(["a", "b", "a"]); // ❌ false
+```
+
+### Example 4: Async Validation
+
+```typescript
+validator.addKeyword({
+  keyword: "existsInDatabase",
+  type: "string",
+  async: true,
+  schemaType: "boolean",
+  validate: async (schemaValue, data, parentSchema, dataContext) => {
+    if (!schemaValue) return true;
+
+    try {
+      const exists = await checkDatabase(data);
+
+      if (!exists) {
+        return {
+          message: `ID '${data}' does not exist in database`,
+        };
+      }
+
+      return true;
+    } catch (error) {
+      return {
+        message: "Database validation failed",
+      };
+    }
+  },
+});
+
+const schema = {
+  type: "string",
+  existsInDatabase: true,
+};
+
+const validate = validator.compile(schema);
+
+await validate("user-123");
+```
+
+### Example 5: Debugging with Context
+
+```typescript
+validator.addKeyword({
+  keyword: "debug",
+  schemaType: "boolean",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    if (!schemaValue) return true;
+
+    console.log("Validation Context:", {
+      data,
+      dataPath: dataContext.dataPath,
+      rootData: dataContext.rootData,
+      parentData: dataContext.parentData,
+      parentDataProperty: dataContext.parentDataProperty,
+      schemaPath: dataContext.schemaPath,
+    });
+
+    return true;
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      debug: true,
+    },
+  },
+};
+```
+
+### When to Use Validate
+
+✅ **Use validate when:**
+
+- Simple validation logic
+- Need full context every time
+- Prototyping (fastest to write)
+- Need async validation without closures
+
+❌ **Don't use validate when:**
+
+- Need maximum performance (use code instead)
+- Can pre-compute logic (use compile instead)
+
+---
+
+## 4. CODE Keywords
+
+**Generates inline validation code as strings for maximum performance. Advanced feature with security considerations.**
+
+⚠️ **SECURITY WARNING:** Code keywords execute generated code strings. Only use code keywords from trusted sources (your own codebase). Never accept code keywords from user input or untrusted sources.
+
+### Type Signature
+
+```typescript
+type CodeFunction<TValue = unknown> = (
+  schemaValue: TValue,
+  parentSchema: SchemaDefinition,
+  context: CodeContext,
+) => string;
+
+interface CodeContext {
+  dataVar: string;
+  dataPath: string;
+  schemaPath: string;
+  accessPattern?: string;
+  errorVariable?: string;
+  allErrors: boolean;
+  functionName: string;
+  extra: Extra;
+  buildError(error: codeError): string;
+  addEvaluatedProperty(prop: any): string;
+  addEvaluatedItem(item: any): string;
+}
+```
+
+### How It Works
+
+1. During compilation, code function is called
+2. Returns validation code as a **string**
+3. Code string is injected directly into generated function
+4. No function call overhead - maximum performance
+
+### Understanding `allErrors` Mode
+
+- **`allErrors: false`** (fail-fast): Return immediately on first error
+- **`allErrors: true`**: Collect all errors in an array
+
+This is not needed when building errors but can sometimes be useful when conditions need to run based on error mode.
+
+### Example 1: Basic Positive Number
+
+```typescript
+validator.addKeyword({
+  keyword: "positive",
+  type: "number",
+  schemaType: "boolean",
+  code: (schemaValue, parentSchema, context) => {
+    if (!schemaValue) return "";
+
+    const { dataVar, dataPath, schemaPath } = context;
+
+    return `
+        if (${dataVar} <= 0) {
+        ${context.buildError({
+          message: '"Must be positive"',
+          keyword: "positive",
+        })}
+          
+        }
+      `;
+  },
+});
+
+const schema = {
+  type: "number",
+  positive: true,
+};
+
+const validate = validator.compile(schema);
+
+validate(5); // ✅ true
+validate(-5); // ❌ false
+validate(0); // ❌ false
+```
+
+The build error method automatically handles the error object creation for all errors mode and fail fast, as well as internal inlining logic.
+
+### Example 2: Using metaSchema with Code
+
+```typescript
+validator.addKeyword({
+  keyword: 'multipleOf',
+  type: 'number',
+  schemaType: 'number',
+  metaSchema: {
+    type: 'number',
+    exclusiveMinimum: 0
+  },
+  code: (schemaValue, parentSchema, context) => {
+    const { dataVar, dataPath, schemaPath, errorVariable, allErrors, functionName } = context;
+    const divisor = schemaValue;
+
+      return `
+        if (${dataVar} % ${divisor} !== 0) {
+          ${context.buildError({
+            keyword: 'multipleOf',
+            expected: divisor,  // be careful of data type
+            message: `"Must be a multiple of ${divisor}"` //The compiler doesn;t serialize error inputs, so either wrap strings the way i did or call JSON.stringify, same applies to object and arrays, boolean and numbers are only exception.
+          })}
+        }
+      `;
+
+  }
+});
+
+// Valid:
+{ type: 'number', multipleOf: 3 }  // ✅
+
+// Invalid (caught by metaSchema):
+{ type: 'number', multipleOf: 0 }  // ❌
+{ type: 'number', multipleOf: -5 }  // ❌
+```
+
+### Example 3: Range with Parent Schema
+
+```typescript
+validator.addKeyword({
+  keyword: "range",
+  type: "number",
+  schemaType: "array",
+  implements: "exclusive",
+  metaSchema: {
+    type: "array",
+    items: { type: "number" },
+    minItems: 2,
+    maxItems: 2,
+  },
+  code: (schemaValue, parentSchema, context) => {
+    const [min, max] = schemaValue;
+    const exclusive = parentSchema.exclusive === true;
+    const { dataVar, dataPath, schemaPath, errorVariable, allErrors } = context;
+
+    const operator = exclusive
+      ? `${dataVar} <= ${min} || ${dataVar} >= ${max}`
+      : `${dataVar} < ${min} || ${dataVar} > ${max}`;
+
+    const message = exclusive
+      ? `Must be between ${min} and ${max} (exclusive)`
+      : `Must be between ${min} and ${max}`;
+
+
+      return `
+        if (${operator}) {
+          ${context.buildError({
+            keyword: 'range',
+            expected: JSON.stringify({ min: ${min}, max: ${max}, exclusive: ${exclusive} }),
+            message: JSON.stringify(message),
+            hi: "there" // you can also add custom properties that will be included in error object, no need to serialize here since its added using spreads
+          })}
+        }
+      `;
+
+  },
+});
+
+const schema = {
+  type: "number",
+  range: [5, 10],
+  exclusive: true,
+};
+
+const validate = validator.compile(schema);
+
+validate(5); // ❌ false
+validate(5.1); // ✅ true
+validate(10); // ❌ false
+```
+
+### Example 4: Unevaluated Properties and items
+
+```typescript
+validator.addKeyword({
+  keyword: "pattern",
+  type: "string",
+  schemaType: "string",
+  code: (schemaValue, parentSchema, context) => {
+    const { dataVar, dataPath, schemaPath, errorVariable, allErrors } = context;
+    const regex = schemaValue.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+    // use these utility methods when you want to directly contribute to the function evaluated properties/items tracking.
+    // once called the compiler internally resolves everything and generate the appropriate code for tracking, this is important when a schema and it subschemas both have the unevaluated keyword, the generated code correctly tracks for both sets at that level.
+    return `
+      const value = ${dataVar};
+        if (new RegExp(${JSON.stringify(regex)}).test(value)) {
+          ${context.addEvaluatedItem(0)} 
+          ${context.addEvaluatedProperty('"yhh"')} // remeber anything going in other than number and booleans must be serialized, wrap it or call JSON.stringify
+        }
+      `;
+  },
+});
+
+// Fail-fast mode (default)
+const validator1 = new JetValidator({ allErrors: false });
+validator1.addKeyword(/* ... */);
+const validate1 = validator1.compile(schema);
+
+// All errors mode
+const validator2 = new JetValidator({ allErrors: true });
+validator2.addKeyword(/* ... */);
+const validate2 = validator2.compile(schema);
+```
+
+### Example 5: Async Example
+
+Unlike other keywords, `code` doesn't need an explicit `async` property.
+It automatically inherits async behavior when the validator instance or compiler is configured as async.
+
+```typescript
+validator.addKeyword({
+  keyword: "pattern",
+  type: "string",
+  schemaType: "string",
+  async: true, // not necessary
+  code: (schemaValue, parentSchema, context) => {
+    const { dataVar } = context;
+    return `
+        const result = fetch(${dataVar});
+        await result.json(); // use await directly in code.
+      `;
+  },
+});
+
+// Instance connfig
+const validator1 = new JetValidator({ async: true });
+validator1.addKeyword(/* ... */);
+const validate1 = validator1.compile(schema);
+
+// compiler config
+const validator2 = new JetValidator();
+validator2.addKeyword(/* ... */);
+const validate2 = validator2.compile(schema, { async: true });
+```
+
+### Security Considerations
+
+**Why CODE keywords are risky:**
+
+```typescript
+// ❌ DANGEROUS: Malicious code keyword
+validator.addKeyword({
+  keyword: "malicious",
+  code: (value) => {
+    return `
+      require('fs').unlinkSync('/important/file');
+      console.log('System compromised!');
+    `;
+  },
+});
+```
+
+**Safe practices:**
+
+- ✅ Always serialize any input that is not boolean or number both in generated code and the utility methods.
+- ⚠️ **Don't manually return true or false**, it will disrupt the entire validation process.
+
+The buildError method handles returns for errors and takes the current compilation context into consideration when doing so.
+This ensures that returns are done perfectly. As for true returns, that only happens at the end of every validation as the validator is designed for the error path — it's only true if no errors.
+Only time returns are harmless are in custom functions:
+
+```typescript
+validator.addKeyword({
+  keyword: "custom",
+  code: (schemaValue, parentSchema, context) => {
+    // In this case the return doesn't affect the entire validation flow as it happens inside a custom function.
+    return `
+        const result = () => {
+          if (true) return false;
+        };
+        if (!result) {
+          ${context.buildError({
+            message: '"function failed"',
+            keyword: "custom",
+          })}
+        }
+      `;
+  },
+});
+```
+
+- ✅ Only add code keywords from your own codebase
+- ✅ Never accept code keyword definitions from users except you are sanitizing. A simple JSON.stringify could render attempts meaningless
+- ✅ User schemas are safe (JSON prevents code injection)
+- ✅ Use validate or compile keywords for user-extensible validation
+
+### When to Use Code
+
+✅ **Use code when:**
+
+- Maximum performance is critical
+- Internal keywords in your library
+- Hot path optimization
+- You control the code source
+
+❌ **Don't use code when:**
+
+- Accepting keyword definitions from users
+- Untrusted sources
+- Security is a primary concern
+- Need async validation
+
+---
+
+## Error Handling
+
+### What You Provide
+
+When returning errors from `compile` or `validate` keywords, you only need to provide:
+
+```typescript
+return {
+  message: "Your error message here",
+};
+```
+
+### What the Compiler Adds
+
+The compiler automatically enriches your error with:
+
+```typescript
+{
+  dataPath: '/user/email',
+  schemaPath: '#/properties/user/properties/email',
+  keyword: 'uniqueEmail',
+  value: 'user@example.com',
+  message: 'This email is already registered'
+}
+```
+
+### Additional Properties
+
+You can include additional properties for debugging:
+
+```typescript
+return {
+  message: "Must be divisible by 3",
+  divisor: 3,
+  remainder: data % 3,
+  suggestion: "Try a multiple of 3",
+};
+```
+
+These will be preserved in the final error object but won't affect the built-in properties.
+
+### For CODE Keywords
+
+When using `code` keywords:
+
+```typescript
+return `
+  if (invalid) {
+  ${context.buildError({
+    message: JSON.stringify("Your error message"),
+  })}
+  }
+`;
+```
+
+---
+
+## Using metaSchema
+
+The `metaSchema` option validates the keyword's value in the schema at compile time.
+
+### Example 1: Simple Type Validation
+
+```typescript
+validator.addKeyword({
+  keyword: 'minAge',
+  type: 'number',
+  schemaType: 'number',
+  metaSchema: {
+    type: 'number',
+    minimum: 0,
+    maximum: 150
+  },
+  validate: (schemaValue, data) => {
+    return data >= schemaValue || {
+      message: `Must be at least ${schemaValue} years old`
+    };
+  }
+});
+
+// Valid schemas:
+{ type: 'number', minAge: 18 }  // ✅
+{ type: 'number', minAge: 21 }  // ✅
+
+// Invalid schemas (compile-time error):
+{ type: 'number', minAge: -5 }  // ❌ Below minimum
+{ type: 'number', minAge: 200 }  // ❌ Above maximum
+{ type: 'number', minAge: 'invalid' }  // ❌ Wrong type
+```
+
+### Example 2: Object Configuration
+
+```typescript
+validator.addKeyword({
+  keyword: 'apiValidation',
+  type: 'string',
+  schemaType: 'object',
+  metaSchema: {
+    type: 'object',
+    properties: {
+      endpoint: {
+        type: 'string',
+        format: 'uri'
+      },
+      method: {
+        type: 'string',
+        enum: ['GET', 'POST']
+      },
+      timeout: {
+        type: 'number',
+        minimum: 100,
+        default: 5000
+      }
+    },
+    required: ['endpoint'],
+    additionalProperties: false
+  },
+  compile: (config) => {
+    return async (data, rootData, dataPath) => {
+      const { endpoint, method = 'GET', timeout = 5000 } = config;
+
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+        const response = await fetch(endpoint, {
+          method,
+          signal: controller.signal,
+          body: method === 'POST' ? JSON.stringify({ value: data }) : undefined
+        });
+
+        clearTimeout(timeoutId);
+        const result = await response.json();
+
+        if (!result.valid) {
+          return { message: result.error || 'API validation failed' };
+        }
+
+        return true;
+      } catch (error) {
+        return { message: 'API validation request failed' };
+      }
+    };
+  }
+});
+
+// Valid schema:
+{
+  type: 'string',
+  apiValidation: {
+    endpoint: 'https://api.example.com/validate',
+    method: 'POST',
+    timeout: 3000
+  }
+}  // ✅
+
+// Invalid schemas:
+{
+  type: 'string',
+  apiValidation: {
+    endpoint: 'not-a-url',  // ❌ Invalid URI format
+    method: 'DELETE'  // ❌ Not in enum
+  }
+}
+
+{
+  type: 'string',
+  apiValidation: {
+    method: 'GET'  // ❌ Missing required 'endpoint'
+  }
+}
+
+{
+  type: 'string',
+  apiValidation: {
+    endpoint: 'https://api.example.com/validate',
+    invalidProp: true  // ❌ additionalProperties: false
+  }
+}
+```
+
+### Example 3: Array Configuration
+
+```typescript
+validator.addKeyword({
+  keyword: 'enum',
+  schemaType: 'array',
+  metaSchema: {
+    type: 'array',
+    items: {},
+    minItems: 1,
+    uniqueItems: true
+  },
+  validate: (schemaValue, data) => {
+    if (!schemaValue.includes(data)) {
+      return {
+        message: `Must be one of: ${schemaValue.join(', ')}`
+      };
+    }
+    return true;
+  }
+});
+
+// Valid schemas:
+{ enum: ['red', 'green', 'blue'] }  // ✅
+{ enum: [1, 2, 3, 4, 5] }  // ✅
+
+// Invalid schemas:
+{ enum: [] }  // ❌ minItems: 1
+{ enum: ['red', 'green', 'red'] }  // ❌ uniqueItems: true
+{ enum: 'invalid' }  // ❌ Not an array
+```
+
+### Example 4: Complex Nested Schema
+
+```typescript
+validator.addKeyword({
+  keyword: 'conditionalValidation',
+  schemaType: 'object',
+  metaSchema: {
+    type: 'object',
+    properties: {
+      when: {
+        type: 'object',
+        properties: {
+          field: { type: 'string' },
+          is: {}
+        },
+        required: ['field', 'is']
+      },
+      then: {
+        type: 'object',
+        properties: {
+          minLength: { type: 'number', minimum: 0 },
+          maxLength: { type: 'number', minimum: 0 },
+          pattern: { type: 'string' }
+        }
+      }
+    },
+    required: ['when', 'then']
+  },
+  compile: (config) => {
+    const { when, then } = config;
+
+    return (data, rootData, dataPath) => {
+      if (rootData[when.field] === when.is) {
+        if (then.minLength && data.length < then.minLength) {
+          return { message: `Must be at least ${then.minLength} characters` };
+        }
+        if (then.maxLength && data.length > then.maxLength) {
+          return { message: `Must be at most ${then.maxLength} characters` };
+        }
+        if (then.pattern && !new RegExp(then.pattern).test(data)) {
+          return { message: `Must match pattern ${then.pattern}` };
+        }
+      }
+      return true;
+    };
+  }
+});
+
+// Valid schema:
+{
+  type: 'string',
+  conditionalValidation: {
+    when: { field: 'country', is: 'USA' },
+    then: { minLength: 5, maxLength: 5, pattern: '^\\d{5}$' }
+  }
+}  // ✅
+
+// Invalid schemas:
+{
+  type: 'string',
+  conditionalValidation: {
+    when: { field: 'country' },  // ❌ Missing 'is'
+    then: { minLength: 5 }
+  }
+}
+
+{
+  type: 'string',
+  conditionalValidation: {
+    when: { field: 'country', is: 'USA' }
+    // ❌ Missing 'then'
+  }
+}
+```
+
+---
+
+## Debugging Custom Keywords
+
+### Inspecting Generated Code
+
+```typescript
+const validate = validator.compile(schema);
+
+console.log(validate.toString());
+
+//or
+
+const validate = validator.compile(schema, { logFunction: true });
+```
+
+This shows the actual generated validation function, including your inline code from `code` keywords.
+
+**Example output:**
+
+```javascript
+function validate(data) {
+  var valid = true;
+  var errors = [];
+
+  // Your CODE keyword's generated code appears here
+  if (data <= 0) {
+    errors.push({
+      dataPath: "/value",
+      schemaPath: "#/positive",
+      keyword: "positive",
+      value: data,
+      message: "Must be positive",
+    });
+  }
+  validate.errors = errors;
+  return errors.length == 0;
+}
+```
+
+### Logging During Validation
+
+```typescript
+validator.addKeyword({
+  keyword: "trace",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    if (schemaValue) {
+      console.log("=== Trace ===");
+      console.log("Data:", data);
+      console.log("Data Path:", dataContext.dataPath);
+      console.log("Root Data:", dataContext.rootData);
+      console.log("Parent Data:", dataContext.parentData);
+      console.log("Schema Path:", dataContext.schemaPath);
+      console.log("=============");
+    }
+    return true;
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        email: {
+          type: "string",
+          trace: true,
+        },
+      },
+    },
+  },
+};
+
+const validate = validator.compile(schema);
+validate({ user: { email: "test@example.com" } });
+```
+
+### Testing Edge Cases
+
+Always handle edge cases in your keywords:
+
+```typescript
+validator.addKeyword({
+  keyword: "safeLength",
+  type: "string",
+  schemaType: "number",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    // Handle null/undefined
+    if (data === null || data === undefined) {
+      return { message: "Value is required" };
+    }
+
+    // Type check (redundant if type: 'string' is specified, but safe)
+    if (typeof data !== "string") {
+      return { message: "Must be a string" };
+    }
+
+    // Empty string
+    if (data === "") {
+      return { message: "Cannot be empty" };
+    }
+
+    // Actual validation
+    if (data.length < schemaValue) {
+      return { message: `Must be at least ${schemaValue} characters` };
+    }
+
+    return true;
+  },
+});
+```
+
+---
+
+## Choosing the Right Keyword Type
+
+### Decision Tree
+
+```
+Need to transform schema to standard keywords?
+├─ YES → Use MACRO
+└─ NO → Need access to actual data?
+    ├─ YES → Need async validation?
+    │   ├─ YES → Use COMPILE or VALIDATE
+    │   │   ├─ Need closures? → COMPILE
+    │   │   └─ Don't need closures? → VALIDATE
+    │   └─ NO → Need cross-field validation or closures?
+    │       ├─ YES → Use COMPILE
+    │       └─ NO → Use VALIDATE (simpler)
+    └─ NO → Use MACRO
+```
+
+### Examples by Use Case
+
+| Use Case                  | Best Type               | Why                                |
+| ------------------------- | ----------------------- | ---------------------------------- |
+| Schema shortcut           | `macro`                 | Transforms to standard keywords    |
+| Password confirmation     | `compile`               | Needs rootData access with closure |
+| Simple validation         | `validate`              | Direct and simple                  |
+| Database lookup           | `compile` or `validate` | Supports async                     |
+| Hot path validation       | `code`                  | Maximum performance                |
+| Debugging                 | `validate`              | Full context access                |
+| Conditional requirements  | `compile`               | Captures conditions in closure     |
+| Complex config validation | Use `metaSchema`        | Validates keyword config           |
+
+---
+
+## Complete Example: Building a Form Validator
+
+```typescript
+import { JetValidator } from "jetvalidator";
+
+const validator = new JetValidator({ allErrors: true });
+
+// MACRO: Email shorthand
+validator.addKeyword({
+  keyword: "email",
+  type: "string",
+  schemaType: "boolean",
+  macro: (value) => {
+    if (!value) return {};
+
+    return {
+      type: "string",
+      format: "email",
+      errorMessage: "Please enter a valid email address",
+    };
+  },
+});
+
+// COMPILE: Password confirmation
+validator.addKeyword({
+  keyword: "matchesField",
+  type: "string",
+  schemaType: "string",
+  compile: (fieldPath) => {
+    return (data, rootData, dataPath) => {
+      if (data !== rootData[fieldPath]) {
+        return { message: "Passwords do not match" };
+      }
+      return true;
+    };
+  },
+});
+
+// COMPILE: Async unique email check
+validator.addKeyword({
+  keyword: "uniqueEmail",
+  type: "string",
+  schemaType: "object",
+  metaSchema: {
+    type: "object",
+    properties: {
+      apiUrl: { type: "string", format: "uri" },
+    },
+    required: ["apiUrl"],
+  },
+  compile: (config) => {
+    return async (data, rootData, dataPath) => {
+      try {
+        const response = await fetch(
+          `${config.apiUrl}?email=${encodeURIComponent(data)}`
+        );
+        const result = await response.json();
+
+        if (result.exists) {
+          return { message: "This email is already registered" };
+        }
+
+        return true;
+      } catch (error) {
+        return { message: "Unable to verify email uniqueness" };
+      }
+    };
+  },
+});
+
+// VALIDATE: Age verification
+validator.addKeyword({
+  keyword: "ageVerified",
+  type: "number",
+  schemaType: "boolean",
+  validate: (schemaValue, data) => {
+    if (!schemaValue) return true;
+
+    if (data < 18) {
+      return { message: "You must be at least 18 years old" };
+    }
+    return true;
+  },
+});
+
+// CODE: Terms acceptance (performance critical)
+validator.addKeyword({
+  keyword: "termsAccepted",
+  type: "boolean",
+  schemaType: "boolean",
+  code: (schemaValue, parentSchema, context) => {
+    if (!schemaValue) return "";
+
+    const { dataVar, dataPath, schemaPath, errorVariable, allErrors } = context;
+
+      return `
+        if (!${dataVar}) {
+          ${context.buildError({
+            keyword: 'termsAccepted', // Not Compulsory, the compiler automatically fills if empty
+            value: ${dataVar},
+            message: "'You must accept the terms and conditions'"
+          })}
+        }
+      `;
+
+  },
+});
+
+const registrationSchema = {
+  type: "object",
+  properties: {
+    email: {
+      email: true,
+      uniqueEmail: {
+        apiUrl: "https://api.example.com/check-email",
+      },
+    },
+    password: {
+      type: "string",
+      minLength: 8,
+    },
+    confirmPassword: {
+      type: "string",
+      matchesField: "password",
+    },
+    age: {
+      type: "number",
+      ageVerified: true,
+    },
+    terms: {
+      type: "boolean",
+      termsAccepted: true,
+    },
+  },
+  required: ["email", "password", "confirmPassword", "age", "terms"],
+};
+
+const validate = validator.compile(registrationSchema);
+
+// Valid data
+const validData = {
+  email: "user@example.com",
+  password: "SecurePass123",
+  confirmPassword: "SecurePass123",
+  age: 25,
+  terms: true,
+};
+
+const result1 = await validate(validData);
+console.log(result1); // true
+
+// Invalid data
+const invalidData = {
+  email: "invalid-email",
+  password: "short",
+  confirmPassword: "different",
+  age: 16,
+  terms: false,
+};
+
+const result2 = await validate(invalidData);
+console.log(result2); // true
+
+console.log(validate.errors)
+// [
+//     { dataPath: '/email', keyword: 'format', message: '...' },
+//     { dataPath: '/password', keyword: 'minLength', message: '...' },
+//     { dataPath: '/confirmPassword', keyword: 'matchesField', message: '...' },
+//     { dataPath: '/age', keyword: 'ageVerified', message: '...' },
+//     { dataPath: '/terms', keyword: 'termsAccepted', message: '...' }
+//   ]
+
+```
+
+---
+
+## Best Practices
+
+### 1. Always Use metaSchema
+
+Validate keyword configuration at compile time:
+
+```typescript
+validator.addKeyword({
+  keyword: "range",
+  type: "number",
+  schemaType: "array",
+  metaSchema: {
+    type: "array",
+    items: { type: "number" },
+    minItems: 2,
+    maxItems: 2,
+  },
+  compile: (value) => {
+    const [min, max] = value;
+
+    if (min >= max) {
+      throw new Error("range: min must be less than max");
+    }
+
+    return (data) => {
+      return (
+        (data >= min && data <= max) || {
+          message: `Must be between ${min} and ${max}`,
+        }
+      );
+    };
+  },
+});
+```
+
+### 2. Handle Edge Cases
+
+```typescript
+validator.addKeyword({
+  keyword: "safeOperation",
+  validate: (schemaValue, data) => {
+    // Check for null/undefined if type isn't provided
+    if (data == null) {
+      return { message: "Value cannot be null or undefined" };
+    }
+
+    // Type check if type isn't provided
+    if (typeof data !== "number") {
+      return { message: "Must be a number" };
+    }
+
+    // Check for special values
+    if (isNaN(data)) {
+      return { message: "Value cannot be NaN" };
+    }
+
+    if (!isFinite(data)) {
+      return { message: "Value must be finite" };
+    }
+
+    // Your actual validation
+    return true;
+  },
+});
+```
+
+### 3. Provide Clear Error Messages
+
+```typescript
+// ❌ Bad: Vague error
+return { message: "Invalid" };
+
+// ✅ Good: Specific and actionable
+return {
+  message: `Email '${data}' is already registered. Please use a different email or try logging in.`,
+};
+
+// ✅ Better: Include helpful context
+return {
+  message: `Must be between ${min} and ${max}, got ${data}`,
+  expected: { min, max },
+  actual: data,
+  suggestion: `Try a value like ${(min + max) / 2}`,
+};
+```
+
+### 4. Use Appropriate Keyword Type
+
+```typescript
+// ❌ Bad: Using validate when compile would be better
+validator.addKeyword({
+  keyword: "matchesField",
+  validate: (fieldPath, data, parentSchema, context) => {
+    // fieldPath is accessed every validation - inefficient!
+    return data === context.rootData[fieldPath];
+  },
+});
+
+// ✅ Good: Using compile to capture fieldPath in closure
+validator.addKeyword({
+  keyword: "matchesField",
+  compile: (fieldPath) => {
+    // fieldPath captured once during compilation
+    return (data, rootData) => {
+      return data === rootData[fieldPath];
+    };
+  },
+});
+```
+
+### 5. Security for CODE Keywords
+
+```typescript
+// ❌ NEVER: Accept code keywords from users
+app.post("/add-keyword", (req, res) => {
+  validator.addKeyword({
+    keyword: req.body.keyword,
+    code: req.body.codeFunction, // ⚠️ CRITICAL SECURITY RISK
+  });
+});
+
+// ✅ Safe: Only use compile/validate for user-extensible validation
+app.post("/add-keyword", (req, res) => {
+  validator.addKeyword({
+    keyword: req.body.keyword,
+    validate: createSafeValidateFunction(req.body.config),
+  });
+});
+
+// ✅ Safe: Use code keywords only for internal, trusted keywords
+validator.addKeyword({
+  keyword: "positive",
+  code: (value, parentSchema, context) => {
+    // This code is in your codebase - safe
+    return `if (${context.dataVar} <= 0) { /* ... */ }`;
+  },
+});
+```
+
+---
+
+## Async Validation
+
+### Which Keywords Support Async?
+
+| Keyword Type | Async Support | Usage                                      |
+| ------------ | ------------- | ------------------------------------------ |
+| **macro**    | ❌ No         | Runs at schema resolution (no data access) |
+| **compile**  | ✅ Yes        | Return async validation function           |
+| **validate** | ✅ Yes        | Return Promise from validation function    |
+| **code**     | ✅ Yes        | use await directly in code.                |
+
+### ⚠️ CRITICAL: Enable Async Mode
+
+**You MUST pass `async: true` to the JetValidator constructor or in compiler method when using async keywords, otherwise validation will have race conditions and produce incorrect results.**
+
+```typescript
+// ❌ WRONG: Will cause race conditions with async keywords
+const validator = new JetValidator();
+
+// ✅ CORRECT: Enable async mode
+const validator = new JetValidator({ async: true });
+
+// or
+
+const validator = new JetValidator({ async: false });
+validator.compile(schema, { async: true }); //Instance Override
+```
+
+### Why Only compile, validate and code?
+
+- **macro**: Runs during schema resolution before any data exists - no data to validate asynchronously
+- **compile**: Returns a function that can be async - perfect for database lookups, API calls
+- **validate**: The function itself can be async - simplest for async operations
+- **code**: Generates inline code for maximum performance but can also be async.
+
+### Async with COMPILE
+
+```typescript
+// Enable async mode
+const validator = new JetValidator({ async: true });
+
+validator.addKeyword({
+  keyword: "uniqueEmail",
+  type: "string",
+  compile: (config) => {
+    // Return an async function
+    return async (data, rootData, dataPath) => {
+      const exists = await checkEmailInDatabase(data);
+
+      if (exists) {
+        return { message: "Email already exists" };
+      }
+
+      return true;
+    };
+  },
+});
+
+const validate = validator.compile(schema);
+
+// Must await the validation
+const result = await validate({ email: "test@example.com" });
+```
+
+### Async with VALIDATE
+
+```typescript
+// Enable async mode
+const validator = new JetValidator({ async: true });
+
+validator.addKeyword({
+  keyword: "existsInAPI",
+  type: "string",
+  // Make the validate function async
+  validate: async (schemaValue, data, parentSchema, context) => {
+    if (!schemaValue) return true;
+
+    const response = await fetch(`https://api.example.com/check/${data}`);
+    const result = await response.json();
+
+    if (!result.exists) {
+      return { message: `ID '${data}' does not exist` };
+    }
+
+    return true;
+  },
+});
+
+const validate = validator.compile(schema);
+
+// Must await the validation
+const result = await validate({ id: "user-123" });
+```
+
+### Async with Code
+
+```typescript
+validator.addKeyword({
+  keyword: "pattern",
+  type: "string",
+  schemaType: "string",
+  async: true, //does nothing
+  code: (schemaValue, parentSchema, context) => {
+    const { dataVar, dataPath, schemaPath, errorVariable, allErrors } = context;
+    return `
+        const result = fetch(${dataVar});
+        await result.json(); // use await directly in code.
+      `;
+  },
+});
+
+// Instance config
+const validator1 = new JetValidator({ async: true });
+validator1.addKeyword(/* ... */);
+const validate1 = validator1.compile(schema);
+
+// compiler config
+const validator2 = new JetValidator();
+validator2.addKeyword(/* ... */);
+const validate2 = validator2.compile(schema, { async: true });
+```
+
+### Multiple Async Keywords
+
+```typescript
+// Enable async mode
+const validator = new JetValidator({ async: true, allErrors: true });
+
+validator.addKeyword({
+  keyword: "uniqueEmail",
+  type: "string",
+  compile: (config) => {
+    return async (data, rootData, dataPath) => {
+      const exists = await checkEmailInDatabase(data);
+      return !exists || { message: "Email already registered" };
+    };
+  },
+});
+
+validator.addKeyword({
+  keyword: "validUsername",
+  type: "string",
+  validate: async (schemaValue, data) => {
+    const available = await checkUsernameAvailability(data);
+    return available || { message: "Username not available" };
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      uniqueEmail: { apiUrl: "https://api.example.com" },
+    },
+    username: {
+      type: "string",
+      validUsername: true,
+    },
+  },
+};
+
+const validate = validator.compile(schema);
+
+// All async validations run correctly
+const result = await validate({
+  email: "user@example.com",
+  username: "johndoe",
+});
+```
+
+### What Happens Without async: true?
+
+```typescript
+// ❌ WITHOUT async: true - RACE CONDITIONS!
+const validator = new JetValidator();
+
+validator.addKeyword({
+  keyword: "checkDB",
+  validate: async (schemaValue, data) => {
+    const exists = await checkDatabase(data);
+    return exists || { message: "Not found" };
+  },
+});
+
+const validate = validator.compile(schema);
+
+// Validation returns immediately without waiting!
+const result = validate({ id: "test" });
+console.log(result); // ⚠️ Wrong! Returns before async completes
+
+// ✅ WITH async: true - CORRECT BEHAVIOR
+const validator = new JetValidator({ async: true });
+
+validator.addKeyword({
+  keyword: "checkDB",
+  validate: async (schemaValue, data) => {
+    const exists = await checkDatabase(data);
+    return exists || { message: "Not found" };
+  },
+});
+
+const validate = validator.compile(schema);
+
+// Validation properly awaits async operations
+const result = await validate({ id: "test" });
+console.log(result); // ✅ Correct! Waits for async to complete
+```
+
+### Best Practices for Async Validation
+
+1. **Always use async: true when you have any async keywords**
+
+```typescript
+const validator = new JetValidator({
+  async: true,
+  allErrors: true, // Optional: collect all errors including async ones
+});
+
+//or
+
+validator.compile(schema, { async: true, allErrors: false }); //Instance override
+```
+
+2. **Handle errors in async operations**
+
+```typescript
+validator.addKeyword({
+  keyword: "apiCheck",
+  validate: async (schemaValue, data) => {
+    try {
+      const result = await apiCall(data);
+      return result.valid || { message: result.error };
+    } catch (error) {
+      return { message: "API validation failed", details: error.message };
+    }
+  },
+});
+```
+
+3. **Add timeouts for async operations**
+
+```typescript
+validator.addKeyword({
+  keyword: "timedCheck",
+  compile: (config) => {
+    return async (data, rootData, dataPath) => {
+      const timeout = config.timeout || 5000;
+
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+        const response = await fetch(config.url, {
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+        const result = await response.json();
+
+        return result.valid || { message: "Validation failed" };
+      } catch (error) {
+        if (error.name === "AbortError") {
+          return { message: `Validation timeout after ${timeout}ms` };
+        }
+        return { message: "Validation error", details: error.message };
+      }
+    };
+  },
+});
+```
+
+4. **Consider caching for repeated async validations**
+
+```typescript
+const cache = new Map();
+
+validator.addKeyword({
+  keyword: "cachedCheck",
+  compile: (config) => {
+    return async (data, rootData, dataPath) => {
+      // Check cache first
+      if (cache.has(data)) {
+        return cache.get(data);
+      }
+
+      // Perform async validation
+      const exists = await checkDatabase(data);
+      const result = exists || { message: "Not found" };
+
+      // Cache the result
+      cache.set(data, result);
+
+      return result;
+    };
+  },
+});
+```
+
+---
+
+## Summary
+
+JetValidator provides four powerful ways to extend JSON Schema validation:
+
+1. **MACRO** - Transform schemas at resolution time for reusable patterns
+2. **COMPILE** - Pre-compile validation logic with closures, supports async
+3. **VALIDATE** - Simple runtime validation with full context access, supports async
+4. **CODE** - Generate inline code for maximum performance (trusted sources only)
+
+### Key Points
+
+- **Error handling**: You provide `message`, compiler adds `dataPath`, `schemaPath`, `keyword`, `value`
+- **Async support**: `compile`, `validate` and `code` support async validation
+- **metaSchema**: Always use it to validate keyword configuration at compile time
+- **type vs schemaType**: `type` is data type, `schemaType` is keyword value type(If wrong type provided, keyword is skipped).
+- **Security**: Only use `code` keywords from trusted sources in your own codebase
+
+### Quick Reference
+
+```typescript
+// MACRO: Transform schema
+macro: <TValue = unknown>(
+  value: TValue,
+  parentSchema: SchemaDefinition,
+  context?: MacroContext,
+) => SchemaDefinition | boolean;
+
+// COMPILE: Return validation function with closures
+compile: <TValue = unknown, TData = unknown, TRootData = unknown>(
+    value: TValue,
+    parentSchema: SchemaDefinition,
+    context: CompileContext,
+  ) =>
+  (data: TData, rootData: TRootData, dataPath: string) =>
+    boolean |
+    KeywordValidationError |
+    Promise<boolean | KeywordValidationError>;
+
+// VALIDATE: Simple validation function
+validate: <TValue = unknown, TData = unknown, TRootData = unknown>(
+  value: TValue,
+  data: TData,
+  parentSchema: SchemaDefinition,
+  context: ValidateDataContext<TRootData>,
+) =>
+  boolean | KeywordValidationError | Promise<boolean | KeywordValidationError>;
+
+// CODE: Generate inline code string
+code: <TValue = unknown>(
+  value: TValue,
+  parentSchema: SchemaDefinition,
+  context: CodeContext,
+) => string;
+```

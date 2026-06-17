@@ -1,0 +1,263 @@
+---
+title: "Introduction"
+description: "The fastest JSON Schema validator in JavaScript(19x Faster than AJV) with sub-millisecond compilation."
+---
+
+# jet-validator
+
+**The Fastest JSON Schema Validator in JavaScript(19x Faster than AJV)**
+
+[![npm version](https://img.shields.io/npm/v/@jetio/validator.svg)](https://www.npmjs.com/package/@jetio/validator) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Build Status](https://img.shields.io/github/workflow/status/@jetio/validator/CI)](https://github.com/official-jetio/validator/actions) [![Bundle Size](https://img.shields.io/bundlephobia/minzip/@jetio/validator)](https://bundlephobia.com/package/@jetio/validator)
+
+---
+
+## 🚀 Key Features
+
+- **⚡ Lightning Fast Compilation** - 19x faster compilation than ajv (Sub-Millisecond compilation)
+- **✅ Full JSON Schema Support** - Draft 06, 07, 2019-09, 2020-12
+- **🎯 Highly Compliant** - Passes JSON Schema Test Suite (only 6 extreme edge case failures)
+- **📦 Smaller Bundle** - 26kB with built-in format validators and custom error messages
+- **🎯 Zero Dependencies** - Pure TypeScript implementation
+- **💪 TypeScript-first** - Full type safety
+- **🔧 Built-in Formats** - Full format support included, no external packages needed
+- **🎨 Enhanced Conditionals** - Supports `elseIf` keyword for cleaner conditional schemas
+- **💬 Better Errors** - Built-in error messages without additional packages
+- **🔄 Partial ajv Compatibility** - Similar Api to AJV
+- **🔧 Custom Keywords** - Macro, compile, validate, and code-based extensions
+- **📊 Multiple Error Modes** - Fail-fast or collect all errors
+- **🎨 Custom Error Messages** - `errorMessage` keyword support
+- **🔄 Type Coercion** - String ↔ number ↔ boolean conversion
+- **🌐 Async Schema Loading** - Load schemas from remote sources
+- **📝 Format Validation** - Email, URL, date, and 20+ built-in formats
+- **🎭 Cross-field Validation** - `$data` references for dynamic constraints
+
+---
+
+## Why jet-validator?
+
+**jet-validator** was built to be the fastest and most developer-friendly JSON Schema validator in JavaScript. While other validators sacrifice compilation speed or require external packages for basic features, jet-validator delivers blazing-fast compilation, complete format support, and enhanced schema capabilities—all in a smaller bundle with zero dependencies.
+
+Whether you're validating API requests, configuration files, or user input, jet-validator provides the performance and features you need without the bloat.
+
+---
+
+## Overview
+
+### What is jet-validator?
+
+jet-validator is a **compile-time JSON Schema validator** that transforms schemas into highly optimized JavaScript validation functions. Unlike traditional validators that interpret schemas at runtime, jet-validator generates specialized code tailored to your exact schema structure.
+
+### Why Compile-Time Validation?
+
+**Traditional validators** (runtime interpretation):
+
+```javascript
+// Parse schema → Interpret rules → Validate data (every time)
+function validate(schema, data) {
+  // Reads and interprets schema on every validation
+  // Slower, generic code path
+}
+```
+
+**jet-validator** (compile-time generation):
+
+```javascript
+// Schema → Optimized function (compiled once)
+const validate = jetValidator.compile(schema);
+
+// Direct execution of generated code
+validate(data); // ⚡ No interpretation overhead
+```
+
+### Compilation Speed: Sub-Millisecond Performance
+
+jet-validator's compilation is **5-44x faster** than other validators, achieving **sub-millisecond compilation times** even for complex schemas. This changes what's possible:
+
+**Compilation Benchmarks:**
+
+```typescript
+const complexSchema = {
+  type: "object",
+  properties: {
+    user: { $ref: "#/$defs/user" },
+    posts: {
+      type: "array",
+      items: { $ref: "#/$defs/post" },
+    },
+  },
+  $defs: {
+    user: {
+      /* complex nested schema */
+    },
+    post: {
+      /* complex nested schema */
+    },
+  },
+};
+
+// jet-validator: 1.2ms ⚡
+// ajv: 40- 80ms
+// Other validators: 5-20ms
+```
+
+### What Fast Compilation Enables
+
+Because compilation is so fast, you can:
+
+✅ **Runtime Schema Compilation** - Compile schemas on-the-fly without performance concerns
+
+```typescript
+app.post("/api/validate", (req, res) => {
+  const schema = req.body.schema;
+  const validate = jetValidator.compile(schema); //  <1ms
+  const result = validate(req.body.data);
+  res.json(result);
+});
+```
+
+✅ **Dynamic Schema Generation** - Build and compile schemas based on user input or configuration
+
+```typescript
+function createValidator(config) {
+  const schema = buildSchemaFromConfig(config);
+  return jetValidator.compile(schema); // Instant compilation
+}
+```
+
+✅ **Hot Schema Reloading** - Update validation rules without restarting your application
+
+```typescript
+watchSchemaFile("./schema.json", (newSchema) => {
+  validate = jetValidator.compile(newSchema); // No noticeable delay
+});
+```
+
+✅ **Per-Request Validators** - Create custom validators for each request context
+
+```typescript
+app.use((req, res, next) => {
+  const tenantSchema = getTenantSchema(req.tenantId);
+  req.validate = jetValidator.compile(tenantSchema);
+  next();
+});
+```
+
+✅ **Testing & Development** - Rapid iteration with instant feedback
+
+```typescript
+test("schema validation", () => {
+  const schema = {
+    /* ... */
+  };
+  const validate = jetValidator.compile(schema); // No test slowdown
+  expect(validate(data)).toEqual(true);
+});
+```
+
+**When caching still matters:** While compilation is incredibly fast, enable caching when:
+
+- Every microsecond counts (high-frequency trading, real-time systems)
+- Compiling the same schema thousands of times per second
+- Working with extremely large schemas (1000+ properties)
+
+Otherwise, the compilation speed is so fast that caching becomes optional rather than mandatory.
+
+## Core Concepts
+
+### Schemas
+
+JSON Schema documents that define the structure and validation rules for your data.
+
+### Meta-Schemas
+
+Schemas that validate other schemas. JetValidator supports Draft-06, Draft-07, Draft 2019-09, and Draft 2020-12.
+
+### Validation
+
+The process of checking data against a schema. Returns `{ valid: boolean, errors?: any[] }`.
+
+```typescript
+interface ValidationResult {
+  valid: boolean;
+  errors?: ValidationError[];
+}
+
+interface ValidationError {
+  dataPath: string;
+  schemaPath: string;
+  keyword: string;
+  value?: any;
+  expected?: any;
+  message: string;
+}
+```
+
+### Compilation
+
+Converting a schema into an optimized validation function. Compiled validators can be reused for better performance.
+
+## 📦 Installation
+
+```bash
+npm install @jetio/validator
+
+```
+
+```bash
+pnpm add @jetio/validator
+
+```
+
+```bash
+yarn add @jetio/validator
+
+```
+
+## 🚀 Quick Start
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+
+const jetValidator = new JetValidator();
+
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 2 },
+    age: { type: "number", minimum: 0, maximum: 120 },
+    email: { type: "string", format: "email" },
+  },
+  required: ["name", "age"],
+};
+
+const validate = jetValidator.compile(schema);
+
+// Valid data
+console.log(
+  validate({
+    name: "Alice",
+    age: 25,
+    email: "alice@example.com",
+  }),
+);
+// Output: true
+
+// Invalid data
+console.log(
+  validate({
+    name: "A",
+    age: 150,
+  }),
+); // false
+console.log(validate.errors);
+
+//   [{
+//     dataPath: '/name',
+//     schemaPath: '#/properties/name/minLength',
+//     keyword: 'minLength',
+//     expected: '2',
+//     message: 'Length of value must be at least 2 characters'
+//   }]
+```
+
+---

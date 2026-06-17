@@ -1,0 +1,1013 @@
+---
+title: "Format Validation"
+description: "Built-in formats, custom formats, async format validation, and format management."
+---
+
+# JetValidator Format Validation
+
+## Overview
+
+Format validation in JetValidator allows you to validate string values (and other types) against predefined or custom patterns. The validator supports:
+
+- **Built-in formats** (email, URL, UUID, date-time, etc.)
+- **Custom formats** with multiple definition styles
+- **Type-specific formats** (apply only to certain data types)
+- **Synchronous and asynchronous validation**
+- **Flexible format modes** (full, fast, or disabled)
+
+---
+
+## Configuration
+
+### Instance-Level Configuration
+
+Format behavior is configured when creating a JetValidator instance:
+
+```typescript
+import { JetValidator } from "jetvalidator";
+
+const jetValidator = new JetValidator({
+  formatMode: "full", // 'full', 'fast', or false
+  formats: [],
+  validateFormats: true, // Enable/disable format validation
+  async: false, // Enable async validation globally
+});
+```
+
+#### Configuration Options
+
+##### `formatMode`
+
+Controls which built-in format validators are loaded:
+
+- **`'full'`** (default): Loads all inbuilt extensive format validators which comprises of functions and complex regex
+- **`'fast'`**: Loads only regex-based format validators for better performance
+- **`false`**: Disables format validation entirely; no inbuilt format validators are loaded, doesn't affect custom formats
+
+```typescript
+// Full Built-in format loaded
+const jetValidator = new JetValidator({ formats: "full" });
+
+// Fast Built-in loaded (regex-only)
+const jetValidator = new JetValidator({ formats: "fast" });
+
+// No Built-in format loaded (custom formats needed)
+const jetValidator = new JetValidator({ formats: false });
+```
+
+##### `validateFormats`
+
+Controls whether formats are actually validated:
+
+- **`true`** (default): Format validation is enabled
+- **`false`**: Format validation is disabled (formats can still be loaded but won't be checked)
+
+```typescript
+// Load formats but don't validate them
+const jetValidator = new JetValidator({
+  formats: "full",
+  validateFormats: false,
+});
+```
+
+**Use case:** Useful during development when you want formats available for reference but want to skip validation for performance.
+
+##### `async`
+
+Controls whether validation functions support async format validators:
+
+- **`false`** (default): Only synchronous format validators are supported
+- **`true`**: Async format validators are supported; all validators must be awaited
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+```
+
+### Per-Compilation Configuration
+
+You can override instance-level settings when compiling a schema:
+
+```typescript
+const jetValidator = new JetValidator({
+  formatMode: "full",
+  validateFormats: true,
+  async: false,
+});
+
+// Override for this specific schema
+const validate = jetValidator.compile(schema, {
+  validateFormats: false, // Skip format validation for this schema
+  async: true, // Enable async for this schema
+});
+```
+
+**Note:** Compilation config accepts the same options as the constructor and takes precedence over instance-level settings, except formatMode since instance are loaded immediately after config, it cant be overriden.
+
+---
+
+## Format Types
+
+### Built-in Formats
+
+JetValidator includes standard JSON Schema formats:
+
+#### Full Format Set (`formats: 'full'`)
+
+**String Formats:**
+
+- `email` - Email addresses (RFC 5322)
+- `uri` - Uniform Resource Identifiers
+- `uri-reference` - URI references
+- `uri-template` - URI templates
+- `url` - URLs (subset of URI)
+- `uuid` - UUIDs (RFC 4122)
+- `hostname` - Internet hostnames (RFC 1123)
+- `ipv4` - IPv4 addresses
+- `ipv6` - IPv6 addresses
+- `json-pointer` - JSON Pointer (RFC 6901)
+- `relative-json-pointer` - Relative JSON Pointer
+- `regex` - Regular expressions
+
+**Date/Time Formats:**
+
+- `date-time` - ISO 8601 date-time
+- `date` - ISO 8601 full-date
+- `time` - ISO 8601 full-time
+- `duration` - ISO 8601 duration
+
+#### Fast Format Set (`formats: 'fast'`)
+
+Simpler versions of the formats listed above, for faster validation
+
+---
+
+## Adding Custom Formats
+
+JetValidator provides multiple ways to define custom format validators, each suited for different use cases.
+
+### 1. Regular Expression
+
+The simplest form - a regex pattern to match against:
+
+```typescript
+jetValidator.addFormat("username", /^[a-zA-Z0-9_]{3,16}$/);
+
+const schema = {
+  type: "string",
+  format: "username",
+};
+
+const validate = jetValidator.compile(schema);
+console.log(validate("john_doe")); // true
+console.log(validate("ab")); // false
+```
+
+**Use when:** You have a simple pattern to match against strings.
+
+### 2. Validation Function
+
+A function that receives the value and returns a boolean:
+
+```typescript
+jetValidator.addFormat("even-length", (value: string) => {
+  return value.length % 2 === 0;
+});
+
+const schema = {
+  type: "string",
+  format: "even-length",
+};
+
+const validate = jetValidator.compile(schema);
+console.log(validate("test")); // true (length 4)
+console.log(validate("hello")); // false (length 5)
+```
+
+**Function signature:**
+
+```typescript
+(value: any) => boolean;
+```
+
+**Use when:** You need simple conditional logic beyond regex.
+
+### 3. Format Object with Validation
+
+An object with a `validate` property that can be a regex or function:
+
+```typescript
+// With regex
+jetValidator.addFormat("hex-color", {
+  validate: /^#[0-9A-Fa-f]{6}$/,
+});
+
+// With function
+jetValidator.addFormat("positive", {
+  validate: (value: number) => value > 0,
+});
+
+const schema = {
+  format: "positive",
+};
+```
+
+**Use when:** You want to use the object format for consistency or to add additional properties like `type`.
+
+### 4. Validation with Custom Error Messages
+
+Functions can throw errors to provide specific error messages:
+
+```typescript
+jetValidator.addFormat("password", {
+  validate: (value: string) => {
+    if (value.length < 8) {
+      throw new Error("Password must be at least 8 characters");
+    }
+    if (!/[A-Z]/.test(value)) {
+      throw new Error("Password must contain an uppercase letter");
+    }
+    if (!/[0-9]/.test(value)) {
+      throw new Error("Password must contain a number");
+    }
+    if (!/[!@#$%^&*]/.test(value)) {
+      throw new Error("Password must contain a special character");
+    }
+    return true;
+  },
+});
+```
+
+**Return values:**
+
+- `true` - Validation passes
+- `false` - Validation fails with default error message
+- `throw Error(...)` - Validation fails with custom error message
+
+**Use when:** You need specific, user-friendly error messages for different validation failures.
+
+---
+
+## Type Constraints
+
+By default, format validation applies to all data types. You can restrict formats to specific types using the `type` property.
+
+### Single Type
+
+```typescript
+jetValidator.addFormat("positive", {
+  type: "number",
+  validate: (value: number) => value > 0,
+});
+
+const schema = { format: "positive" };
+const validate = jetValidator.compile(schema);
+
+console.log(validate(5)); // true
+console.log(validate(-5)); // true
+console.log(validate("hello")); // true - wrong type, format skipped
+```
+
+**Available types:**
+
+- `'string'`
+- `'number'`
+- `'integer'`
+- `'boolean'`
+- `'array'`
+- `'object'`
+- `'null'`
+
+### Multiple Types
+
+Formats can apply to multiple types using an array:
+
+```typescript
+jetValidator.addFormat("non-empty", {
+  type: ["string", "array"],
+  validate: (value: string | any[]) => value.length > 0,
+});
+
+const schema = { format: "non-empty" };
+const validate = jetValidator.compile(schema);
+
+console.log(validate("hello")); // true
+console.log(validate("")); // true
+console.log(validate([1, 2])); // true
+console.log(validate([])); // true
+console.log(validate(42)); // true - wrong type, format skipped
+```
+
+### Why Use Type Constraints?
+
+1. **Performance**: Validation only runs on appropriate types
+2. **Type Safety**: Format validators receive correctly typed values
+3. **Clearer Intent**: Makes schema more self-documenting
+4. **Prevents Errors**: Avoids runtime errors from type mismatches
+
+---
+
+## Async Format Validation
+
+JetValidator supports asynchronous format validation for use cases like database lookups, API calls, or other I/O operations.
+
+### Defining Async Formats
+
+Mark a format as async by setting the `async` property to `true`:
+
+```typescript
+jetValidator.addFormat("unique-email", {
+  type: "string",
+  async: true,
+  validate: async (value: string) => {
+    // Simulate database check
+    const exists = await checkEmailInDatabase(value);
+    return !exists;
+  },
+});
+```
+
+### Using Async Formats
+
+#### Method 1: Global Async Configuration
+
+Enable async validation for all schemas compiled by the instance:
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+
+const schema = {
+  type: "string",
+  format: "unique-email",
+};
+
+const validate = jetValidator.compile(schema);
+
+// Must await validation
+const result = await validate("new@example.com");
+console.log(result); // true
+```
+
+#### Method 2: Per-Schema Async Configuration
+
+Enable async validation for a specific schema:
+
+```typescript
+const jetValidator = new JetValidator({ async: false });
+
+const schema = {
+  type: "string",
+  format: "unique-email",
+};
+
+// Enable async for this compilation only
+const validate = jetValidator.compile(schema, { async: true });
+
+// Must await validation
+const result = await validate("new@example.com");
+```
+
+#### Method 3: Override Instance Setting
+
+Override the instance-level async setting:
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+
+const syncSchema = {
+  type: "string",
+  format: "email", // Sync format
+};
+
+// Override instance setting for sync validation
+const validate = jetValidator.compile(syncSchema, { async: false });
+
+// No await needed
+const result = validate("test@example.com");
+```
+
+### Async Error Handling
+
+Async validators support the same error handling as sync validators:
+
+```typescript
+jetValidator.addFormat("valid-api-key", {
+  type: "string",
+  async: true,
+  validate: async (value: string) => {
+    try {
+      const response = await fetch(`/api/validate?key=${value}`);
+      const data = await response.json();
+
+      if (!data.valid) {
+        throw new Error(data.reason || "Invalid API key");
+      }
+
+      return true;
+    } catch (error) {
+      throw new Error(`API validation failed: ${error.message}`);
+    }
+  },
+});
+```
+
+### Mixed Sync/Async Formats
+
+You can use both sync and async formats in the same instance:
+
+```typescript
+const jetValidator = new JetValidator();
+
+// Sync format
+jetValidator.addFormat("email", /^[^\s@]+@[^\s@]+\.[^\s@]+$/);
+
+// Async format
+jetValidator.addFormat("unique-email", {
+  type: "string",
+  async: true,
+  validate: async (value: string) => await isUnique(value),
+});
+
+// Schema with sync format - no async needed
+const emailSchema = {
+  type: "string",
+  format: "email",
+};
+const validateEmail = jetValidator.compile(emailSchema);
+validateEmail("test@example.com"); // Sync validation
+
+// Schema with async format - requires async
+const uniqueSchema = {
+  type: "string",
+  format: "unique-email",
+};
+const validateUnique = jetValidator.compile(uniqueSchema, { async: true });
+await validateUnique("test@example.com"); // Async validation
+```
+
+### Performance Considerations
+
+**Async validation has trade-offs:**
+
+✅ **Pros:**
+
+- Enables complex validation requiring I/O
+- Non-blocking for Node.js applications
+- Can perform database/API checks
+
+❌ **Cons:**
+
+- Slower than synchronous validation
+- Requires `await` on all validators
+- Cannot be used in synchronous contexts
+
+**Best practices:**
+
+1. Only use async when necessary (database checks, API calls)
+2. Use sync formats for simple validation (regex, calculations)
+3. Consider caching async validation results
+4. Set `async: false` by default, enable per-schema as needed
+
+---
+
+## Format Management
+
+### Adding Formats
+
+```typescript
+jetValidator.addFormat(name: string, definition: FormatDefinition): void
+```
+
+Adds a custom format validator.
+
+**Throws:** Error if format already exists.
+
+```typescript
+jetValidator.addFormat("slug", /^[a-z0-9-]+$/);
+```
+
+### Removing Formats
+
+```typescript
+jetValidator.removeFormat(name: string): void
+```
+
+Removes a format validator.
+
+**Throws:** Error if format doesn't exist.
+
+```typescript
+jetValidator.removeFormat("slug");
+```
+
+### Checking Format Registration
+
+```typescript
+jetValidator.isFormatRegistered(name: string): boolean
+```
+
+Returns `true` if the format is registered.
+
+```typescript
+if (jetValidator.isFormatRegistered("email")) {
+  console.log("Email format is available");
+}
+```
+
+### Getting Format Definition
+
+```typescript
+jetValidator.getFormat(name: string): FormatDefinition | undefined
+```
+
+Retrieves the format definition.
+
+```typescript
+const emailFormat = jetValidator.getFormat("email");
+```
+
+### Listing Registered Formats
+
+```typescript
+jetValidator.getRegisteredFormats(): string[]
+```
+
+Returns array of all registered format names.
+
+```typescript
+const formats = jetValidator.getRegisteredFormats();
+console.log(formats); // ['email', 'url', 'uuid', 'username', ...]
+```
+
+### Getting All Formats
+
+```typescript
+jetValidator.getAllFormats(): Record<string, FormatDefinition>
+```
+
+Returns a copy of all format definitions.
+
+```typescript
+const allFormats = jetValidator.getAllFormats();
+```
+
+### Testing Formats Directly
+
+#### Test Format
+
+```typescript
+jetValidator.testFormat(value: string, format: string): boolean | Promise<boolean>
+```
+
+Tests a value against a format validator.
+
+```typescript
+const isValid = jetValidator.testFormat("test@example.com", "email");
+console.log(isValid); // true
+
+// For async formats
+const isUnique = await jetValidator.testFormat("new@example.com", "unique-email");
+```
+
+#### Validate Format
+
+```typescript
+jetValidator.validateFormat(value: string, format: string): ValidationResult
+```
+
+Validates a value and returns a detailed result.
+
+```typescript
+const result = jetValidator.validateFormat("invalid-email", "email");
+console.log(result);
+// { valid: false, errors: { format: "Failed to validate format 'email'" } }
+```
+
+---
+
+## Advanced Usage
+
+### Combining Type and Format Validation
+
+```typescript
+const schema = {
+  type: "string",
+  format: "email",
+  minLength: 5,
+  maxLength: 100,
+};
+
+const validate = jetValidator.compile(schema);
+```
+
+Type is checked first, then format. If type validation fails, format validation is skipped.
+
+### Format with Schema Composition
+
+```typescript
+jetValidator.addFormat("strong-password", {
+  type: "string",
+  validate: (value: string) => {
+    return (
+      value.length >= 12 &&
+      /[A-Z]/.test(value) &&
+      /[a-z]/.test(value) &&
+      /[0-9]/.test(value) &&
+      /[!@#$%^&*]/.test(value)
+    );
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    username: {
+      type: "string",
+      format: "username",
+    },
+    password: {
+      type: "string",
+      format: "strong-password",
+    },
+    email: {
+      type: "string",
+      format: "email",
+    },
+  },
+  required: ["username", "password", "email"],
+};
+```
+
+### Conditional Format Validation
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    contactType: { type: "string", enum: ["email", "phone"] },
+  },
+  if: {
+    properties: { contactType: { const: "email" } },
+  },
+  then: {
+    properties: {
+      contact: { type: "string", format: "email" },
+    },
+  },
+  else: {
+    properties: {
+      contact: { type: "string", format: "phone" },
+    },
+  },
+};
+```
+
+### Reusing Format Logic
+
+```typescript
+const isValidLength = (min: number, max: number) => (value: string) =>
+  value.length >= min && value.length <= max;
+
+jetValidator.addFormat("short-text", {
+  type: "string",
+  validate: isValidLength(1, 50),
+});
+
+jetValidator.addFormat("medium-text", {
+  type: "string",
+  validate: isValidLength(1, 200),
+});
+
+jetValidator.addFormat("long-text", {
+  type: "string",
+  validate: isValidLength(1, 1000),
+});
+```
+
+### Custom Formats with Dependencies
+
+```typescript
+import validator from "validator";
+
+jetValidator.addFormat("credit-card", {
+  type: "string",
+  validate: (value: string) => validator.isCreditCard(value),
+});
+
+jetValidator.addFormat("isbn", {
+  type: "string",
+  validate: (value: string) => validator.isISBN(value),
+});
+```
+
+### Format Validation with Side Effects
+
+```typescript
+const auditLog: string[] = [];
+
+jetValidator.addFormat("audited-email", {
+  type: "string",
+  validate: (value: string) => {
+    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+    auditLog.push(`Email validation: ${value} - ${isValid ? "PASS" : "FAIL"}`);
+    return isValid;
+  },
+});
+```
+
+**Note:** Side effects should be used carefully as validators may be called multiple times.
+
+---
+
+## API Reference
+
+### FormatDefinition Type
+
+```typescript
+type FormatDefinition =
+  | RegExp
+  | ((value: any) => boolean)
+  | {
+      validate: RegExp | ((value: any) => boolean | Promise<boolean>);
+      type?: string | string[];
+      async?: boolean;
+    };
+```
+
+### Configuration Types
+
+```typescript
+interface ValidatorOptions {
+  formats?: "full" | "fast" | false;
+  validateFormats?: boolean;
+  async?: boolean;
+  // ... other options
+}
+
+interface CompileConfig {
+  validateFormats?: boolean;
+  async?: boolean;
+  // ... other overrides (same as ValidatorOptions)
+}
+```
+
+### Methods
+
+#### `addFormat(name, definition)`
+
+```typescript
+addFormat(name: string, definition: FormatDefinition): void
+```
+
+#### `removeFormat(name)`
+
+```typescript
+removeFormat(name: string): void
+```
+
+#### `getFormat(name)`
+
+```typescript
+getFormat(name: string): FormatDefinition | undefined
+```
+
+#### `isFormatRegistered(name)`
+
+```typescript
+isFormatRegistered(name: string): boolean
+```
+
+#### `getRegisteredFormats()`
+
+```typescript
+getRegisteredFormats(): string[]
+```
+
+#### `getAllFormats()`
+
+```typescript
+getAllFormats(): Record<string, FormatDefinition>
+```
+
+#### `testFormat(value, format)`
+
+```typescript
+testFormat(value: string, format: string): boolean | Promise<boolean>
+```
+
+#### `validateFormat(value, format)`
+
+```typescript
+validateFormat(value: string, format: string): ValidationResult
+```
+
+#### `compile(schema, config)`
+
+```typescript
+compile(schema: object | boolean, config?: CompileConfig): Function
+```
+
+---
+
+## Examples
+
+### Example 1: User Registration
+
+```typescript
+const jetValidator = new JetValidator({ formats: "full" });
+
+jetValidator.addFormat("username", {
+  type: "string",
+  validate: (value: string) => {
+    if (value.length < 3) {
+      throw new Error("Username must be at least 3 characters");
+    }
+    if (value.length > 20) {
+      throw new Error("Username must be at most 20 characters");
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(value)) {
+      throw new Error(
+        "Username can only contain letters, numbers, and underscores"
+      );
+    }
+    return true;
+  },
+});
+
+jetValidator.addFormat("strong-password", {
+  type: "string",
+  validate: (value: string) => {
+    const checks = [
+      { test: value.length >= 8, error: "at least 8 characters" },
+      { test: /[A-Z]/.test(value), error: "an uppercase letter" },
+      { test: /[a-z]/.test(value), error: "a lowercase letter" },
+      { test: /[0-9]/.test(value), error: "a number" },
+      { test: /[!@#$%^&*]/.test(value), error: "a special character" },
+    ];
+
+    const failed = checks.find((check) => !check.test);
+    if (failed) {
+      throw new Error(`Password must contain ${failed.error}`);
+    }
+    return true;
+  },
+});
+
+const userSchema = {
+  type: "object",
+  properties: {
+    username: { type: "string", format: "username" },
+    email: { type: "string", format: "email" },
+    password: { type: "string", format: "strong-password" },
+  },
+  required: ["username", "email", "password"],
+};
+
+const validate = jetValidator.compile(userSchema);
+```
+
+### Example 2: Async Email Uniqueness Check
+
+```typescript
+const jetValidator = new JetValidator();
+
+jetValidator.addFormat("unique-email", {
+  type: "string",
+  async: true,
+  validate: async (value: string) => {
+    // Check format first
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      throw new Error("Invalid email format");
+    }
+
+    // Check uniqueness in database
+    const user = await db.users.findOne({ email: value });
+    if (user) {
+      throw new Error("Email is already registered");
+    }
+
+    return true;
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "unique-email" },
+  },
+};
+
+const validate = jetValidator.compile(schema, { async: true });
+
+try {
+  const result = await validate({ email: "new@example.com" });
+  console.log("Registration successful");
+} catch (error) {
+  console.error("Validation failed:", error);
+}
+```
+
+### Example 3: Multi-Type Format
+
+```typescript
+jetValidator.addFormat("positive", {
+  type: ["number", "integer"],
+  validate: (value: number) => {
+    if (value <= 0) {
+      throw new Error("Value must be positive");
+    }
+    return true;
+  },
+});
+
+const productSchema = {
+  type: "object",
+  properties: {
+    price: { type: "number", format: "positive" },
+    quantity: { type: "integer", format: "positive" },
+  },
+};
+```
+
+### Example 4: Dynamic Format Configuration
+
+```typescript
+// Development: Skip format validation
+const devValidator = new JetValidator({
+  formats: "full",
+  validateFormats: false,
+});
+
+// Production: Full validation
+const prodValidator = new JetValidator({
+  formats: "full",
+  validateFormats: true,
+});
+
+// Testing: Sync only for speed
+const testValidator = new JetValidator({
+  formats: "fast",
+  async: false,
+});
+```
+
+---
+
+## Best Practices
+
+1. **Use type constraints** to ensure format validators receive correct types
+2. **Throw descriptive errors** instead of returning false for better UX
+3. **Enable async only when needed** to maintain performance
+4. **Use 'fast' formats in production** if full validation isn't required
+5. **Cache async validation results** when possible
+6. **Keep format validators pure** (avoid side effects)
+7. **Document custom formats** with clear error messages
+8. **Test formats independently** using `testFormat()` before schema compilation
+
+---
+
+## Troubleshooting
+
+### Format not validating
+
+**Check:**
+
+1. Is `validateFormats` set to `true`?
+2. Is the format registered? Use `isFormatRegistered()`
+3. Is the data type correct for type-constrained formats?
+
+### Async format not working
+
+**Check:**
+
+1. Is `async: true` set on the format definition?
+2. Is `async: true` passed to `compile()` or set in constructor?
+3. Are you awaiting the validation result?
+
+### Format exists error
+
+**Problem:** `addFormat()` throws "format already exists"
+
+**Solution:** Remove the format first:
+
+```typescript
+jetValidator.removeFormat("email");
+jetValidator.addFormat("email", /custom-pattern/);
+```
+
+---
+
+## Performance Metrics
+
+**Format validation overhead:**
+
+- Regex formats: ~0.01ms per validation
+- Function formats: ~0.01ms per validation
+- Async formats: 10-1000ms per validation (depends on I/O)
+
+**Recommendations:**
+
+- Use `formats: 'fast'` for high-throughput applications
+- Batch async validations when possible
+- Consider caching async validation results
+
+---

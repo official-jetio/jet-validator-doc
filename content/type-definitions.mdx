@@ -1,0 +1,583 @@
+---
+title: "Type Definitions"
+description: "TypeScript type definitions for schemas, validators, errors, and custom extensions."
+---
+
+# Type Definitions
+
+JetValidator provides comprehensive TypeScript types for schema definitions, validation options, custom keywords, and formats.
+
+## Core Types
+
+### SchemaDefinition
+
+The main type for JSON Schema definitions. Supports all JSON Schema Draft 2020-12, 2019-09, and Draft 7 keywords.
+
+```typescript
+import { SchemaDefinition } from "jetvalidator";
+
+const schema: SchemaDefinition = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number", minimum: 0 },
+  },
+  required: ["name"],
+};
+```
+
+**Key Properties:**
+
+```typescript
+interface BaseSchema<T = any> {
+  // Type validation
+  type?: SchemaType; // "string" | "number" | "boolean" | "integer" | "array" | "object" | "null" | Array
+
+  // String validation
+  minLength?: number | $data;
+  maxLength?: number | $data;
+  pattern?: string | $data;
+  format?: string | $data;
+
+  // Number validation
+  minimum?: number | $data;
+  maximum?: number | $data;
+  exclusiveMinimum?: number | $data;
+  exclusiveMaximum?: number | $data;
+  multipleOf?: number | $data;
+
+  // Array validation
+  items?: SchemaDefinition | (SchemaDefinition | boolean)[] | boolean;
+  prefixItems?: (SchemaDefinition | boolean)[];
+  minItems?: number | $data;
+  maxItems?: number | $data;
+  contains?: SchemaDefinition | boolean;
+  uniqueItems?: boolean | $data;
+  unevaluatedItems?: SchemaDefinition | boolean;
+  minContains?: number | $data;
+  maxContains?: number | $data;
+  // draft07 and below
+  additionalItems?: SchemaDefinition | boolean;
+
+  // Object validation
+  properties?: T extends object
+    ? { [K in keyof T]?: SchemaDefinition | boolean }
+    : Record<string, SchemaDefinition | boolean>;
+
+  required?: T extends object ? (keyof T)[] : string[] | $data;
+  minProperties?: number | $data;
+  maxProperties?: number | $data;
+  patternProperties?: Record<string, SchemaDefinition | boolean>;
+  additionalProperties?: SchemaDefinition | boolean;
+  unevaluatedProperties?: SchemaDefinition | boolean;
+  propertyNames?: SchemaDefinition | boolean;
+  dependentRequired?: Record<string, string[]>;
+  dependentSchemas?: Record<string, SchemaDefinition | boolean>;
+  // legacy dependencies (draft-07)
+  dependencies?: Record<string, string[] | SchemaDefinition>;
+
+  // Composition
+  allOf?: (SchemaDefinition | boolean)[];
+  anyOf?: (SchemaDefinition | boolean)[];
+  oneOf?: (SchemaDefinition | boolean)[];
+  not?: SchemaDefinition | boolean;
+
+  // Conditionals
+  if?: SchemaDefinition | boolean;
+  then?: SchemaDefinition | boolean;
+  else?: SchemaDefinition | boolean;
+  elseIf?: { if?: SchemaDefinition; then?: SchemaDefinition }[]; // Extension
+
+  // Value constraints
+  const?: any | $data;
+  enum?: any[] | $data;
+
+  // References
+  $ref?: string;
+  $dynamicRef?: string;
+  $anchor?: string;
+  $dynamicAnchor?: string;
+  $defs?: Record<string, SchemaDefinition | boolean>;
+  definitions?: Record<string, SchemaDefinition | boolean>;
+
+  $vocabulary?: Record<string, boolean>;
+  // Metadata
+  $id?: string;
+  $schema?: string;
+  title?: string;
+  description?: string;
+  examples?: any[];
+  default?: any;
+  readOnly?: boolean;
+  writeOnly?: boolean;
+
+  errorMessage?: string | Record<string, any>;
+  [key: string]: any;
+}
+```
+
+### $data Support
+
+JetValidator supports `$data` references for dynamic schema values:
+
+```typescript
+type $data = { $data: string };
+
+const schema: SchemaDefinition = {
+  type: "object",
+  properties: {
+    smaller: { type: "number" },
+    larger: {
+      type: "number",
+      minimum: { $data: "1/smaller" }, // Reference to sibling property
+    },
+  },
+};
+```
+
+---
+
+## Validation Types
+
+### ValidatorOptions
+
+Configuration options for the JetValidator validator.
+
+```typescript
+interface ValidatorOptions {
+  // Error handling
+  allErrors?: boolean; // Collect all errors (default: false)
+
+  // Schema validation
+  validateSchema?: boolean; // Validate schema itself (default: true)
+  strictSchema?: boolean; // Strict schema validation
+  metaSchema?: string; // Meta-schema to use
+  draft?: "draft2019-09" | "draft2020-12" | "draft7" | "draft6"; // for handling refs
+
+  // Format validation
+  validateFormats?: boolean; // Validate format keywords (default: true)
+  formatMode?: "full" | "fast" | false; // Format validation mode
+  formats?: string[]; // formats to include in stand alone generation
+  overwrittenFormats?: string[]; // inbuilt formats that were overriden in stand alone generation
+
+  // Code generation
+  async?: boolean; // Generate async validators
+  inlineRefs?: boolean; // Inline $ref schemas
+  $data?: boolean; // Support $data references
+
+  // Type coercion
+  coerceTypes?: boolean | "array"; // Coerce types
+  useDefaults?: boolean | "empty"; // Use default values
+  removeAdditional?: boolean | "all" | "failing"; // Remove additional properties
+
+  // Strict mode
+  strict?: boolean; // Strict mode
+  strictTypes?: boolean | "log"; // Strict type checking
+  strictNumbers?: boolean; // Reject NaN, Infinity
+  strictRequired?: boolean; // Strict required validation
+
+  // Performance
+  cache?: boolean; // Cache compiled validators
+  loopEnum?: number; // Unroll enum loops threshold
+  loopRequired?: number; // Unroll required loops threshold
+
+  // External schemas
+  loadSchema?: (uri: string) => Promise<SchemaDefinition> | SchemaDefinition;
+  addUsedSchema?: boolean; // Add used schemas to schema egistry to avoid refetching
+
+  // Debugging
+  debug?: boolean; // Enable debug logging
+  verbose?: boolean; // Verbose error messages
+  logFunction?: boolean; // Log generated functions
+
+  // Extensions
+  errorMessage?: boolean; // Custom error messages support
+}
+```
+
+### ValidationError
+
+Structure of validation errors.
+
+```typescript
+interface ValidationError {
+  dataPath: string; // Path to the invalid data (e.g., "/user/age")
+  schemaPath: string; // Path in schema (e.g., "#/properties/user/properties/age")
+  keyword: string; // keyword that failed (e.g., "minimum")
+  value?: any; // Actual value
+  expected?: any; // Expected value
+  message: string; // Error message
+  [key: string]: any; // Additional properties
+}
+```
+
+**Example:**
+
+```typescript
+const validate = jetvalidator.compile(schema);
+const isValid = validate({ age: -5 });
+
+if (!isValid) {
+  console.log(validate.errors);
+  // [
+  //   {
+  //     dataPath: "/age",
+  //     schemaPath: "#/properties/age/minimum",
+  //     keyword: "minimum",
+  //     value: -5,
+  //     expected: 0,
+  //     message: "Value must be at least 0"
+  //   }
+  // ]
+}
+```
+
+### ValidationResult
+
+Return type for `validate` and `validateAsync` custom keywords.
+
+```typescript
+interface ValidationResult {
+  valid: boolean;
+  errors?: ValidationError[];
+}
+```
+
+### ErrorAttachedValidatorFn
+
+Type for compiled validation functions with attached errors.
+
+```typescript
+type ValidationFunction = (data: any) => boolean;
+
+type ErrorAttachedValidatorFn = ValidationFunction & {
+  errors: ValidationError[];
+};
+```
+
+**Example:**
+
+```typescript
+const validate: ErrorAttachedValidatorFn = jetvalidator.compile(schema);
+
+validate(data); // Returns boolean
+validate.errors; // Access errors array
+```
+
+---
+
+## Custom Keywords
+
+JetValidator supports four types of custom keywords: `macro`, `compile`, `validate`, and `code`.
+
+### KeywordDefinition
+
+Base interface for all keyword definitions.
+
+```typescript
+interface KeywordDefinition {
+  keyword: string; // Name of the keyword
+  type?: SchemaType; // Only apply to these types
+  schemaType?: SchemaType; // Expected type of keyword value
+  implements?: string | string[]; // Other keywords this handles
+  async?: boolean; // Async keyword
+  metaSchema?: SchemaDefinition; // Schema to validate keyword value
+}
+```
+
+### MacroKeywordDefinition
+
+Macro keywords expand into other schema constructs at compile time.
+
+```typescript
+interface MacroKeywordDefinition extends KeywordDefinition {
+  macro: MacroFunction;
+}
+
+type MacroFunction<TValue = unknown> = (
+  schemaValue: TValue, // The keyword's value
+  parentSchema: SchemaDefinition, // Full schema
+  context?: MacroContext, // Compilation context
+) => SchemaDefinition | boolean; // Returns expanded schema
+
+interface MacroContext {
+  schemaPath: string; // Path in schema
+  rootSchema: SchemaDefinition; // Root schema
+  opts: ValidatorOptions; // Validator options
+}
+```
+
+**Example:**
+
+```typescript
+jetvalidator.addKeyword({
+  keyword: "range",
+  type: "number",
+  macro: (value, parentSchema) => ({
+    minimum: value[0],
+    maximum: value[1],
+  }),
+});
+
+// Usage:
+const schema = {
+  type: "number",
+  range: [0, 100], // Expands to: { minimum: 0, maximum: 100 }
+};
+```
+
+### CompileKeywordDefinition
+
+Compile keywords generate validation functions at compile time.
+
+```typescript
+interface CompileKeywordDefinition extends KeywordDefinition {
+  compile: CompileFunction;
+}
+
+type CompileFunction<TValue = unknown, TData = unknown, TRootData = unknown> = (
+  schemaValue: TValue,
+  parentSchema: SchemaDefinition,
+  context: CompileContext,
+) => CompiledValidateFunction<TData, TRootData>;
+ 
+interface CompileContext {
+  schemaPath: string;
+  rootSchema: SchemaDefinition;
+  opts: ValidatorOptions;
+}
+ 
+type CompiledValidateFunction<TData = unknown, TRootData = unknown> = (
+  data: TData,
+  rootData: TRootData,
+  dataPath: string,
+) =>
+  | boolean
+  | KeywordValidationError
+  | Promise<boolean | KeywordValidationError>;
+ 
+interface ValidationError {
+  message: string;
+  [key: string]: any;
+}
+```
+
+### ValidateKeywordDefinition
+
+Validate keywords run validation logic at runtime.
+
+```typescript
+interface ValidateKeywordDefinition extends KeywordDefinition {
+  validate: ValidateFunction;
+}
+
+type ValidateFunction<
+  TValue = unknown,
+  TData = unknown,
+  TRootData = unknown,
+> = (
+  schemaValue: TValue,
+  data: TData,
+  parentSchema: SchemaDefinition,
+  dataContext: ValidateDataContext<TRootData>,
+) =>
+  | boolean
+  | KeywordValidationError
+  | Promise<boolean | KeywordValidationError>;
+ 
+interface ValidateDataContext<TRootData = unknown> {
+  dataPath: string;
+  rootData: TRootData;
+  schemaPath: string;
+  parentData?: unknown;
+  parentDataProperty?: string | number;
+}
+
+interface KeywordValidationError {
+  message: string;
+  [key: string]: any;
+}
+```
+
+**Example:**
+
+```typescript
+jetvalidator.addKeyword({
+  keyword: "isEven",
+  type: "number",
+  validate: (schemaValue, data) => {
+    if (!schemaValue) return true; // Keyword disabled
+    return data % 2 === 0;
+  },
+});
+```
+
+### CodeKeywordDefinition
+
+Code keywords generate inline validation code (most performant).
+
+```typescript
+interface CodeKeywordDefinition extends KeywordDefinition {
+  code: CodeFunction;
+}
+
+type CodeFunction<TValue = unknown> = (
+  schemaValue: TValue,
+  parentSchema: SchemaDefinition,
+  context: CodeContext,
+) => string;
+
+interface CodeContext {
+  dataVar: string; // Variable name for current data (e.g., "var1")
+  dataPath: string; // Path to data (e.g., "/user/email")
+  schemaPath: string; // Path in schema
+  accessPattern?: string; // Full access pattern (e.g., "var1['email']")
+  errorVariable?: string; // "allErrors" or undefined (for allErrors mode)
+  allErrors: boolean; // Whether allErrors is enabled
+  functionName: string; // Name of the validation function
+  // validation utilities
+  extra: Extra;
+  buildError(error: codeError): string;
+  addEvaluatedProperty(prop: any): string;
+  addEvaluatedItem(item: any): string;
+}
+```
+
+**Example:**
+
+```typescript
+jetvalidator.addKeyword({
+  keyword: "isEven",
+  type: "number",
+  code: (schemaValue, parentSchema, context) => {
+    if (!schemaValue) return ""; // Keyword disabled
+
+    return `
+      if (${context.dataVar} % 2 !== 0) {
+        ${context.functionName}.errors = [{
+          dataPath: "${context.dataPath}",
+          schemaPath: "${context.schemaPath}",
+          keyword: "isEven",
+          message: "Number must be even"
+        }];
+        return false;
+      }
+    `;
+  },
+});
+```
+
+**Important for Code Keywords:**
+
+- Must handle `allErrors` mode by checking `context.allErrors`
+- Use `context.errorVariable` when `allErrors` is `true`
+- Return early with `return false` when `allErrors` is `false`
+- Generate clean, optimized JavaScript code
+
+---
+
+## Custom Formats
+
+JetValidator supports custom format validators.
+
+### FormatDefinition
+
+```typescript
+type FormatDefinition = RegExp | ((value: any) => boolean) | FormatValidate;
+
+interface FormatValidate {
+  async?: boolean; // Async format validation
+  type?: SchemaType; // Only apply to these types
+  validate: RegExp | ((value: any) => boolean | Promise<boolean>);
+}
+```
+
+**Examples:**
+
+```typescript
+// Regex format
+jetvalidator.addFormat("uppercase", /^[A-Z]+$/);
+
+// Function format
+jetvalidator.addFormat("positive", (value) => value > 0);
+
+// Advanced format with type
+jetvalidator.addFormat("customEmail", {
+  type: "string",
+  validate: (value) => /^[^@]+@[^@]+\.[^@]+$/.test(value),
+});
+
+// Async format
+jetvalidator.addFormat("uniqueUsername", {
+  async: true,
+  type: "string",
+  validate: async (value) => {
+    const exists = await checkDatabase(value);
+    return !exists;
+  },
+});
+```
+
+---
+
+## Type Utilities
+
+### SchemaType
+
+```typescript
+type PrimitiveType = "string" | "number" | "boolean" | "integer";
+type BaseType = PrimitiveType | "array" | "object" | "null";
+type SchemaType = BaseType | BaseType[];
+```
+
+**Usage:**
+
+```typescript
+const schema: SchemaDefinition = {
+  type: ["string", "number"], // Multiple types
+};
+```
+
+---
+
+## Examples
+
+### Full Type-Safe Schema
+
+```typescript
+import {
+  SchemaDefinition,
+  ValidatorOptions,
+  ErrorAttachedValidatorFn,
+} from "jetvalidator";
+
+const options: ValidatorOptions = {
+  allErrors: true,
+  validateFormats: true,
+  strictTypes: true,
+};
+
+const schema: SchemaDefinition = {
+  type: "object",
+  properties: {
+    username: {
+      type: "string",
+      minLength: 3,
+      maxLength: 20,
+      pattern: "^[a-zA-Z0-9_]+$",
+    },
+    email: {
+      type: "string",
+      format: "email",
+    },
+    age: {
+      type: "integer",
+      minimum: 18,
+      maximum: 120,
+    },
+  },
+  required: ["username", "email"],
+};
+
+const validate: ErrorAttachedValidatorFn = jetvalidator.compile(schema);
+```

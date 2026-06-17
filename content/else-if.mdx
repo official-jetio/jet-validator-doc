@@ -1,0 +1,677 @@
+---
+title: "elseIf Keyword"
+description: "Extended conditional validation with elseIf for cleaner multi-branch schemas."
+---
+
+# elseIf Keyword - Extended Conditional Validation
+
+## Overview
+
+`elseIf` is a custom JSON Schema keyword extension that enables **multiple conditional validation branches** without complex nesting. It's designed to make multi-condition validation more readable and maintainable.
+
+### The Problem with Standard JSON Schema
+
+**Traditional approach using nested if/then/else:**
+
+```javascript
+{
+  if: { properties: { type: { const: "food" } } },
+  then: { required: ["calories", "servingSize"] },
+  else: {
+    if: { properties: { type: { const: "drink" } } },
+    then: { required: ["volume", "alcoholContent"] },
+    else: {
+      if: { properties: { type: { const: "supplement" } } },
+      then: { required: ["dosage", "ingredients"] },
+      else: { required: ["name"] }
+    }
+  }
+}
+```
+
+**Problems:**
+
+- ❌ Deep nesting is hard to read
+- ❌ Difficult to maintain and modify
+- ❌ Adding new conditions means restructuring the entire schema
+- ❌ Error-prone when conditions grow
+
+---
+
+## The elseIf Solution
+
+**Same logic with elseIf:**
+
+```javascript
+{
+  if: { properties: { type: { const: "food" } } },
+  then: { required: ["calories", "servingSize"] },
+  elseIf: [
+    {
+      if: { properties: { type: { const: "drink" } } },
+      then: { required: ["volume", "alcoholContent"] }
+    },
+    {
+      if: { properties: { type: { const: "supplement" } } },
+      then: { required: ["dosage", "ingredients"] }
+    }
+  ],
+  else: { required: ["name"] }
+}
+```
+
+**Benefits:**
+
+- ✅ Flat structure - no deep nesting
+- ✅ Easy to read and understand
+- ✅ Simple to add/remove conditions
+- ✅ Maintainable as conditions grow
+
+---
+
+## Syntax
+
+```javascript
+{
+  if: { /* condition */ },
+  then: { /* schema if condition matches */ },
+  elseIf: [
+    {
+      if: { /* condition 2 */ },
+      then: { /* schema if condition 2 matches */ }
+    },
+    {
+      if: { /* condition 3 */ },
+      then: { /* schema if condition 3 matches */ }
+    }
+    // ... more conditions
+  ],
+  else: { /* schema if no conditions match */ }
+}
+```
+
+### Rules
+
+1. **elseIf is an array** - Each item contains an `if` and `then`
+2. **Only `if` and `then` allowed** - `else` inside elseIf is **ignored**
+3. **Evaluation order** - Checks in order: main `if`, then each `elseIf`, finally `else`
+4. **First match wins** - Stops at the first matching condition
+5. **JSON Schema compliant** - `if` and `then` in elseIf follow the same rules as standard JSON Schema
+6. **Works with unevaluatedProperties/Items and other keywords** - Tracks evaluated properties correctly across all branches
+
+---
+
+## How It Works
+
+### Evaluation Flow
+
+```
+1. Check main 'if' condition
+   ├─ TRUE  → Apply 'then' schema → DONE
+   └─ FALSE → Continue to step 2
+
+2. Check elseIf[0].if condition
+   ├─ TRUE  → Apply elseIf[0].then schema → DONE
+   └─ FALSE → Continue to step 3
+
+3. Check elseIf[1].if condition
+   ├─ TRUE  → Apply elseIf[1].then schema → DONE
+   └─ FALSE → Continue to step 4
+
+... (repeat for all elseIf items)
+
+N. No conditions matched
+   └─ Apply 'else' schema (if present)
+```
+
+### Example with Data
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    accountType: { type: "string" },
+  },
+  if: {
+    properties: { accountType: { const: "premium" } },
+  },
+  then: {
+    required: ["creditCard", "billingAddress"],
+  },
+  elseIf: [
+    {
+      if: { properties: { accountType: { const: "basic" } } },
+      then: { required: ["email"] },
+    },
+    {
+      if: { properties: { accountType: { const: "trial" } } },
+      then: { required: ["email", "expiryDate"] },
+    },
+  ],
+  else: {
+    required: ["email", "password"],
+  },
+};
+
+// Data: { accountType: "premium" }
+// Matches main 'if' → Requires: creditCard, billingAddress ✅
+
+// Data: { accountType: "basic" }
+// Main 'if' fails → Checks elseIf[0] → Matches → Requires: email ✅
+
+// Data: { accountType: "trial" }
+// Main 'if' fails → elseIf[0] fails → elseIf[1] matches → Requires: email, expiryDate ✅
+
+// Data: { accountType: "guest" }
+// All conditions fail → Applies 'else' → Requires: email, password ✅
+```
+
+---
+
+## Use Cases
+
+### 1. Role-Based Validation
+
+```javascript
+{
+  properties: {
+    role: { type: "string", enum: ["admin", "editor", "viewer", "guest"] }
+  },
+  if: { properties: { role: { const: "admin" } } },
+  then: {
+    required: ["username", "password", "adminKey", "permissions"],
+    properties: {
+      permissions: { type: "array" }
+    }
+  },
+  elseIf: [
+    {
+      if: { properties: { role: { const: "editor" } } },
+      then: {
+        required: ["username", "password", "editableResources"]
+      }
+    },
+    {
+      if: { properties: { role: { const: "viewer" } } },
+      then: {
+        required: ["username", "password"]
+      }
+    }
+  ],
+  else: {
+    // guest
+    required: ["email"]
+  }
+}
+```
+
+---
+
+### 2. Product Type Validation
+
+```javascript
+{
+  properties: {
+    productType: { type: "string" }
+  },
+  if: { properties: { productType: { const: "electronics" } } },
+  then: {
+    required: ["warranty", "voltage", "manufacturer"],
+    properties: {
+      warranty: { type: "number", minimum: 1 },
+      voltage: { type: "string" }
+    }
+  },
+  elseIf: [
+    {
+      if: { properties: { productType: { const: "clothing" } } },
+      then: {
+        required: ["size", "material", "careInstructions"],
+        properties: {
+          size: { enum: ["XS", "S", "M", "L", "XL"] }
+        }
+      }
+    },
+    {
+      if: { properties: { productType: { const: "food" } } },
+      then: {
+        required: ["expiryDate", "ingredients", "allergens"],
+        properties: {
+          expiryDate: { type: "string", format: "date" }
+        }
+      }
+    },
+    {
+      if: { properties: { productType: { const: "book" } } },
+      then: {
+        required: ["isbn", "author", "publisher"],
+        properties: {
+          isbn: { type: "string", pattern: "^[0-9]{13}$" }
+        }
+      }
+    }
+  ],
+  else: {
+    required: ["name", "description", "price"]
+  }
+}
+```
+
+---
+
+### 3. Payment Method Validation
+
+```javascript
+{
+  properties: {
+    paymentMethod: { type: "string" }
+  },
+  if: { properties: { paymentMethod: { const: "credit_card" } } },
+  then: {
+    required: ["cardNumber", "cvv", "expiryDate", "cardholderName"]
+  },
+  elseIf: [
+    {
+      if: { properties: { paymentMethod: { const: "paypal" } } },
+      then: {
+        required: ["paypalEmail"]
+      }
+    },
+    {
+      if: { properties: { paymentMethod: { const: "bank_transfer" } } },
+      then: {
+        required: ["accountNumber", "routingNumber", "bankName"]
+      }
+    },
+    {
+      if: { properties: { paymentMethod: { const: "cryptocurrency" } } },
+      then: {
+        required: ["walletAddress", "cryptoType"]
+      }
+    }
+  ],
+  else: {
+    required: ["paymentMethod"]
+  }
+}
+```
+
+---
+
+### 4. Shipping Option Validation
+
+```javascript
+{
+  properties: {
+    shippingSpeed: { type: "string" }
+  },
+  if: { properties: { shippingSpeed: { const: "express" } } },
+  then: {
+    required: ["phoneNumber", "deliveryTime"],
+    properties: {
+      deliveryTime: { enum: ["morning", "afternoon", "evening"] }
+    }
+  },
+  elseIf: [
+    {
+      if: { properties: { shippingSpeed: { const: "priority" } } },
+      then: {
+        required: ["phoneNumber"]
+      }
+    },
+    {
+      if: { properties: { shippingSpeed: { const: "standard" } } },
+      then: {
+        properties: {
+          signature: { type: "boolean", default: false }
+        }
+      }
+    }
+  ],
+  else: {
+    required: ["address", "zipCode"]
+  }
+}
+```
+
+---
+
+## Interaction with unevaluatedProperties/Items
+
+`elseIf` **correctly tracks evaluated properties and items** across all branches, just like standard `if/then/else`:
+
+```javascript
+{
+  type: "object",
+  properties: {
+    type: { type: "string" }
+  },
+  if: { properties: { type: { const: "A" } } },
+  then: {
+    properties: {
+      fieldA: { type: "string" }
+    }
+  },
+  elseIf: [
+    {
+      if: { properties: { type: { const: "B" } } },
+      then: {
+        properties: {
+          fieldB: { type: "number" }
+        }
+      }
+    }
+  ],
+  unevaluatedProperties: false
+}
+
+// Valid: { type: "A", fieldA: "hello" }
+// - type: evaluated by main 'if'
+// - fieldA: evaluated by 'then'
+
+// Valid: { type: "B", fieldB: 42 }
+// - type: evaluated by elseIf[0].if
+// - fieldB: evaluated by elseIf[0].then
+
+// Invalid: { type: "A", fieldA: "hello", extra: "field" }
+// - extra: NOT evaluated by any branch → unevaluatedProperties error!
+```
+
+**How it works internally:**
+
+1. Each `if` condition tracks which properties it evaluated
+2. If condition matches, the corresponding `then` tracks its evaluated properties
+3. All tracked properties are merged with the parent schema's tracking
+4. `unevaluatedProperties` correctly identifies properties that weren't evaluated by any branch
+
+**UnevaluatedItems works the same way.**
+
+---
+
+## Comparison: elseIf vs Alternatives
+
+### vs Nested if/then/else
+
+**Nested (Standard JSON Schema):**
+
+```javascript
+// 3 conditions = 3 levels deep
+{
+  if: { /* A */ },
+  then: { /* ... */ },
+  else: {
+    if: { /* B */ },
+    then: { /* ... */ },
+    else: {
+      if: { /* C */ },
+      then: { /* ... */ }
+    }
+  }
+}
+```
+
+**With elseIf:**
+
+```javascript
+// 3 conditions = flat structure
+{
+  if: { /* A */ },
+  then: { /* ... */ },
+  elseIf: [
+    { if: { /* B */ }, then: { /* ... */ } },
+    { if: { /* C */ }, then: { /* ... */ } }
+  ]
+}
+```
+
+---
+
+### vs oneOf
+
+**oneOf:**
+
+```javascript
+{
+  oneOf: [
+    {
+      properties: { type: { const: "A" } },
+      required: ["fieldA"],
+    },
+    {
+      properties: { type: { const: "B" } },
+      required: ["fieldB"],
+    },
+  ];
+}
+```
+
+**Problems with oneOf:**
+
+- ❌ Must match **exactly one** - fails if data matches multiple branches or none
+- ❌ No clear "default" case
+- ❌ All branches are evaluated (performance)
+- ❌ Error messages can be confusing
+
+**elseIf:**
+
+```javascript
+{
+  if: { properties: { type: { const: "A" } } },
+  then: { required: ["fieldA"] },
+  elseIf: [
+    {
+      if: { properties: { type: { const: "B" } } },
+      then: { required: ["fieldB"] }
+    }
+  ],
+  else: { required: ["name"] }
+}
+```
+
+**Benefits:**
+
+- ✅ First match wins - clear, predictable behavior
+- ✅ Default case with `else`
+- ✅ Short-circuits on first match (performance)
+- ✅ Clearer error messages
+
+---
+
+### vs anyOf with if/then
+
+**anyOf approach:**
+
+```javascript
+{
+  anyOf: [
+    {
+      if: { properties: { type: { const: "A" } } },
+      then: { required: ["fieldA"] },
+    },
+    {
+      if: { properties: { type: { const: "B" } } },
+      then: { required: ["fieldB"] },
+    },
+  ];
+}
+```
+
+**Problems:**
+
+- ❌ Must match **at least one** - can match multiple branches
+- ❌ No guaranteed evaluation order
+- ❌ No clear default case
+
+---
+
+## Why elseIf is Important
+
+### 1. **Readability**
+
+Multiple conditions are immediately clear without counting nesting levels.
+
+### 2. **Maintainability**
+
+Adding or removing conditions doesn't require restructuring the entire schema.
+
+### 3. **Performance**
+
+Short-circuits on first match - doesn't evaluate unnecessary branches.
+
+### 4. **Intent**
+
+Clearly expresses "check these conditions in order until one matches".
+
+### 5. **Real-World Patterns**
+
+Most conditional logic in applications follows if/elseif/else pattern, not deeply nested structures.
+
+---
+
+## Important Notice
+
+1. **Not Standard JSON Schema**
+
+   - This is a custom extension
+   - May not work with other JSON Schema validators
+   - Use only if you're using this specific compiler
+
+2. **elseIf Array Order Matters**
+
+   - Conditions are checked in array order
+   - First match wins
+   - Order carefully for correct behavior
+
+3. **Only if/then in elseIf Items**
+   - `else` inside elseIf items is **ignored**
+   - Each elseIf item must have both `if` and `then`
+
+---
+
+## Best Practices
+
+### ✅ DO: Order from Most Specific to Least Specific
+
+```javascript
+{
+  if: { properties: { role: { const: "super_admin" } } },
+  then: { /* most specific */ },
+  elseIf: [
+    {
+      if: { properties: { role: { const: "admin" } } },
+      then: { /* specific */ }
+    },
+    {
+      if: { properties: { role: { const: "user" } } },
+      then: { /* general */ }
+    }
+  ],
+  else: { /* default/guest */ }
+}
+```
+
+### ✅ DO: Keep Conditions Mutually Exclusive
+
+```javascript
+// Good - clear, non-overlapping conditions
+{
+  if: { properties: { status: { const: "active" } } },
+  then: { /* ... */ },
+  elseIf: [
+    { if: { properties: { status: { const: "pending" } } }, then: { /* ... */ } },
+    { if: { properties: { status: { const: "inactive" } } }, then: { /* ... */ } }
+  ]
+}
+```
+
+### ❌ DON'T: Create Overlapping Conditions
+
+```javascript
+// Bad - conditions can overlap
+{
+  if: { properties: { age: { minimum: 18 } } },
+  then: { /* adult */ },
+  elseIf: [
+    { if: { properties: { age: { minimum: 21 } } }, then: { /* ... */ } }
+    // This will never match! Already caught by first condition
+  ]
+}
+```
+
+### ✅ DO: Provide a Default with else
+
+```javascript
+{
+  if: { /* A */ },
+  then: { /* ... */ },
+  elseIf: [
+    { if: { /* B */ }, then: { /* ... */ } }
+  ],
+  else: { /* Default case - always provide this! */ }
+}
+```
+
+---
+
+## Migration from Nested if/then/else
+
+**Before:**
+
+```javascript
+{
+  if: { properties: { type: { const: "A" } } },
+  then: { required: ["a"] },
+  else: {
+    if: { properties: { type: { const: "B" } } },
+    then: { required: ["b"] },
+    else: {
+      if: { properties: { type: { const: "C" } } },
+      then: { required: ["c"] },
+      else: { required: ["default"] }
+    }
+  }
+}
+```
+
+**After:**
+
+```javascript
+{
+  if: { properties: { type: { const: "A" } } },
+  then: { required: ["a"] },
+  elseIf: [
+    {
+      if: { properties: { type: { const: "B" } } },
+      then: { required: ["b"] }
+    },
+    {
+      if: { properties: { type: { const: "C" } } },
+      then: { required: ["c"] }
+    }
+  ],
+  else: { required: ["default"] }
+}
+```
+
+**Steps:**
+
+1. Keep the main `if` and `then`
+2. Extract each nested `if/then` into an elseIf array item
+3. Keep the deepest `else` as the main `else`
+4. Test thoroughly to ensure same behavior
+
+---
+
+## Summary
+
+`elseIf` brings **clarity and maintainability** to multi-condition validation:
+
+- 📖 **Readable** - Flat structure, easy to understand
+- 🔧 **Maintainable** - Simple to add/remove conditions
+- ⚡ **Efficient** - Short-circuits on first match
+- ✅ **Compatible** - Works with unevaluatedProperties and all JSON Schema features
+- 🎯 **Practical** - Matches real-world conditional logic patterns
+
+Use it when you have **multiple mutually exclusive conditions** that need different validation rules.
+
+---

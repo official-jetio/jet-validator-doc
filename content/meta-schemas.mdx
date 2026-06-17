@@ -1,0 +1,2508 @@
+---
+title: "Meta-Schema System"
+description: "Validate schemas against JSON Schema meta-schemas across drafts 04 through 2020-12."
+---
+
+# Meta-Schema System
+
+The meta-schema system in JetValidator validates that your JSON Schemas are correctly structured according to JSON Schema specifications. This ensures your schemas are valid before you use them for data validation.
+
+## What Are Meta-Schemas?
+
+A **meta-schema** is a JSON Schema that validates other JSON Schemas. It defines:
+
+- What keywords are allowed
+- The structure of keyword values
+- Relationships between keywords
+- Draft-specific rules and constraints
+
+Think of it as "schema validation for schemas."
+
+**Example:**
+
+```typescript
+// Your data schema
+const userSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Meta-schema validates that userSchema is correct
+// - Is 'type' a valid keyword?
+// - Is 'object' a valid type value?
+// - Is 'properties' structured correctly?
+// - Are all required meta-schema rules met?
+```
+
+---
+
+### Why Validate Schemas?
+
+**1. Catch Errors Early**
+
+```typescript
+// ❌ Typo in schema (would cause runtime issues)
+const badSchema = {
+  type: "objct", // Typo: should be 'object'
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Validation catches this before it's used
+jetValidator.validateSchema(badSchema); // false
+```
+
+**2. Prevent Invalid Configurations**
+
+```typescript
+// ❌ Invalid minimum (should be number)
+const invalidSchema = {
+  type: "number",
+  minimum: "10", // String instead of number
+};
+
+jetValidator.validateSchema(invalidSchema); // false
+```
+
+**3. Draft Compatibility**
+
+```typescript
+// ❌ Using Draft 2020-12 keyword with Draft-07
+const incompatibleSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  unevaluatedProperties: false, // Only in 2019-09+
+};
+
+jetValidator.validateSchema(incompatibleSchema); // false
+```
+
+**4. Team Standards**
+
+```typescript
+// Enforce that all schemas declare their version
+const schema = {
+  type: "string",
+  // Missing $schema keyword
+};
+
+if (!schema.$schema) {
+  console.warn("Schema should declare $schema version");
+}
+```
+
+---
+
+### Supported JSON Schema Drafts
+
+| Draft             | URI                                            | Year | Key Features                                                   |
+| :---------------- | :--------------------------------------------- | :--- | :------------------------------------------------------------- |
+| **Draft-06**      | `https://json-schema.org/draft-06/schema`      | 2017 | `const`, `contains`, `propertyNames`                           |
+| **Draft-07**      | `https://json-schema.org/draft-07/schema`      | 2018 | `if`/`then`/`else`, `readOnly`, `writeOnly`                    |
+| **Draft 2019-09** | `https://json-schema.org/draft/2019-09/schema` | 2019 | `unevaluatedProperties`, `unevaluatedItems`, vocabulary system |
+| **Draft 2020-12** | `https://json-schema.org/draft/2020-12/schema` | 2020 | `prefixItems`, `$dynamicRef`, improved `$ref`                  |
+
+**Recommendation:** Use **Draft-07** for maximum compatibility, or **Draft 2020-12** for newest features.
+
+---
+
+### Setting Up Meta-Schemas
+
+Setting up meta-schemas is a **one-time process** with three steps:
+
+1.  Download meta-schema files
+2.  Generate loader
+3.  Load into JetValidator instance
+
+---
+
+#### Step 1: Download Meta-Schemas
+
+Use the JetValidator CLI to download meta-schema JSON files.
+
+**CLI Syntax:**
+
+```bash
+npx jet-meta load <version> [outputDir]
+```
+
+**Available Versions:**
+
+- `draft-06` - JSON Schema Draft-06
+- `draft-07` - JSON Schema Draft-07
+- `draft/2019-09` - JSON Schema Draft 2019-09
+- `draft/2020-12` - JSON Schema Draft 2020-12
+- `all` - All supported drafts
+
+**Output Directory:**
+
+- Default: `./meta-schemas`
+- Custom: Any directory path you specify
+
+---
+
+**Example 1: Download Draft-07 (Most Common)**
+
+```bash
+npx jet-meta load draft-07
+```
+
+**Output:**
+
+```
+Loading meta-schema: draft-07
+Output directory: /path/to/your-project/meta-schemas
+  ✓ meta-schemas/draft-07/schema.json
+✓ Saved draft-07 to meta-schemas/draft-07
+
+✓ Generated loader: meta-schemas/loader.ts
+
+Usage:
+  import { loadDraft07, loadAllMetaSchemas } from './meta-schemas/loader';
+```
+
+**Generated Files:**
+
+```
+meta-schemas/
+├── draft-07/
+│   └── schema.json
+└── loader.ts
+```
+
+---
+
+**Example 2: Download Draft 2020-12**
+
+```bash
+npx jet-meta load draft/2020-12
+```
+
+**Output:**
+
+```
+Loading meta-schema: draft/2020-12
+Output directory: /path/to/your-project/meta-schemas
+  ✓ meta-schemas/draft/2020-12/schema.json
+  ✓ meta-schemas/draft/2020-12/meta/core.json
+  ✓ meta-schemas/draft/2020-12/meta/applicator.json
+  ✓ meta-schemas/draft/2020-12/meta/unevaluated.json
+  ✓ meta-schemas/draft/2020-12/meta/validation.json
+  ✓ meta-schemas/draft/2020-12/meta/meta-data.json
+  ✓ meta-schemas/draft/2020-12/meta/format-annotation.json
+  ✓ meta-schemas/draft/2020-12/meta/content.json
+✓ Saved draft/2020-12 to meta-schemas/draft/2020-12
+
+✓ Generated loader: meta-schemas/loader.ts
+```
+
+**Why So Many Files?**
+
+Draft 2019-09 and 2020-12 use a modular vocabulary system. The main schema references sub-schemas for different concerns:
+
+- `core.json` - Core keywords (`$id`, `$ref`, `$schema`)
+- `applicator.json` - Applicator keywords (`properties`, `items`, `allOf`)
+- `validation.json` - Validation keywords (`type`, `minimum`, `pattern`)
+- `unevaluated.json` - Unevaluated keywords (`unevaluatedProperties`)
+- `meta-data.json` - Metadata keywords (`title`, `description`)
+- `format-annotation.json` - Format annotations
+- `content.json` - Content keywords (`contentMediaType`)
+
+**Generated Files:**
+
+```
+meta-schemas/
+├── draft/
+│   └── 2020-12/
+│       ├── schema.json
+│       └── meta/
+│           ├── core.json
+│           ├── applicator.json
+│           ├── unevaluated.json
+│           ├── validation.json
+│           ├── meta-data.json
+│           ├── format-annotation.json
+│           └── content.json
+└── loader.ts
+```
+
+---
+
+**Example 3: Download All Drafts**
+
+```bash
+npx jet-meta load all
+```
+
+**Output:**
+
+```
+
+Loading meta-schema: draft-06
+  ✓ meta-schemas/draft-06/schema.json
+✓ Saved draft-06 to meta-schemas/draft-06
+
+Loading meta-schema: draft-07
+  ✓ meta-schemas/draft-07/schema.json
+✓ Saved draft-07 to meta-schemas/draft-07
+
+Loading meta-schema: draft/2019-09
+  ✓ meta-schemas/draft/2019-09/schema.json
+  ✓ meta-schemas/draft/2019-09/meta/core.json
+  ✓ meta-schemas/draft/2019-09/meta/applicator.json
+  ✓ meta-schemas/draft/2019-09/meta/validation.json
+  ✓ meta-schemas/draft/2019-09/meta/meta-data.json
+  ✓ meta-schemas/draft/2019-09/meta/format.json
+  ✓ meta-schemas/draft/2019-09/meta/content.json
+✓ Saved draft/2019-09 to meta-schemas/draft/2019-09
+
+Loading meta-schema: draft/2020-12
+  ✓ meta-schemas/draft/2020-12/schema.json
+  ✓ meta-schemas/draft/2020-12/meta/core.json
+  ✓ meta-schemas/draft/2020-12/meta/applicator.json
+  ✓ meta-schemas/draft/2020-12/meta/unevaluated.json
+  ✓ meta-schemas/draft/2020-12/meta/validation.json
+  ✓ meta-schemas/draft/2020-12/meta/meta-data.json
+  ✓ meta-schemas/draft/2020-12/meta/format-annotation.json
+  ✓ meta-schemas/draft/2020-12/meta/content.json
+✓ Saved draft/2020-12 to meta-schemas/draft/2020-12
+
+✓ Generated loader: meta-schemas/loader.ts
+
+Usage:
+  import { loadDraft04, loadDraft06, loadDraft07, loadDraft201909, loadDraft202012, loadAllMetaSchemas } from './meta-schemas/loader';
+```
+
+**Generated Files:**
+
+```
+meta-schemas/
+├── draft-06/
+│   └── schema.json
+├── draft-07/
+│   └── schema.json
+├── draft/
+│   ├── 2019-09/
+│   │   ├── schema.json
+│   │   └── meta/
+│   │       └── ...
+│   └── 2020-12/
+│       ├── schema.json
+│       └── meta/
+│           └── ...
+└── loader.ts
+```
+
+---
+
+**Example 4: Custom Output Directory**
+
+```bash
+npx jet-meta load draft-07 ./src/validation/meta-schemas
+```
+
+**Output:**
+
+```
+Loading meta-schema: draft-07
+Output directory: /path/to/your-project/src/validation/meta-schemas
+  ✓ src/validation/meta-schemas/draft-07/schema.json
+✓ Saved draft-07 to src/validation/meta-schemas/draft-07
+
+✓ Generated loader: src/validation/meta-schemas/loader.ts
+
+Usage:
+  import { loadDraft07 } from './src/validation/meta-schemas/loader';
+```
+
+---
+
+**Example 5: Add to package.json Scripts**
+
+```json
+{
+  "name": "my-app",
+  "scripts": {
+    "meta:download": "jet-meta load all ./meta-schemas",
+    "meta:draft-07": "jet-meta load draft-07 ./meta-schemas",
+    "meta:draft-2020": "jet-meta load draft/2020-12 ./meta-schemas",
+    "postinstall": "npm run meta:download"
+  }
+}
+```
+
+```bash
+# Run scripts
+npm run meta:download
+npm run meta:draft-07
+```
+
+---
+
+#### Step 2: The Auto-Generated Loader
+
+The CLI automatically generates `loader.ts` with functions to load meta-schemas into JetValidator.
+
+**Generated Loader Structure:**
+
+```typescript
+// meta-schemas/loader.ts (AUTO-GENERATED)
+
+/**
+ * Auto-generated meta-schema loader
+ * Generated by: jet-meta load
+ *
+ * Usage:
+ *   import { loadDraft07, loadAllMetaSchemas } from './loader';
+ *
+ *   const jetValidator = new JetValidator();
+ *   loadDraft07(jetValidator);
+ */
+
+import schema_draft_07 from "./draft-07/schema.json";
+import schema_draft_2020_12 from "./draft/2020-12/schema.json";
+import schema_draft_2020_12_core from "./draft/2020-12/meta/core.json";
+import schema_draft_2020_12_applicator from "./draft/2020-12/meta/applicator.json";
+import schema_draft_2020_12_unevaluated from "./draft/2020-12/meta/unevaluated.json";
+import schema_draft_2020_12_validation from "./draft/2020-12/meta/validation.json";
+import schema_draft_2020_12_meta_data from "./draft/2020-12/meta/meta-data.json";
+import schema_draft_2020_12_format_annotation from "./draft/2020-12/meta/format-annotation.json";
+import schema_draft_2020_12_content from "./draft/2020-12/meta/content.json";
+
+/**
+ * Load JSON Schema draft-07 meta-schemas into JetValidator instance
+ */
+export function loadDraft07(jetValidator: any): void {
+  // Register main meta-schema with full URL
+  jetValidator.addMetaSchema(
+    schema_draft_07,
+    "https://json-schema.org/draft-07/schema"
+  );
+  // Register with short alias
+  jetValidator.addMetaSchema(schema_draft_07, "draft-07");
+}
+
+/**
+ * Load JSON Schema draft/2020-12 meta-schemas into JetValidator instance
+ */
+export function loadDraft202012(jetValidator: any): void {
+  // Register main meta-schema
+  jetValidator.addMetaSchema(
+    schema_draft_2020_12,
+    "https://json-schema.org/draft/2020-12/schema"
+  );
+  jetValidator.addMetaSchema(schema_draft_2020_12, "draft/2020-12");
+
+  // Register sub-schemas
+  jetValidator.addSchema(
+    schema_draft_2020_12_core,
+    "https://json-schema.org/draft/2020-12/meta/core"
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_applicator,
+    "https://json-schema.org/draft/2020-12/meta/applicator"
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_unevaluated,
+    "https://json-schema.org/draft/2020-12/meta/unevaluated"
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_validation,
+    "https://json-schema.org/draft/2020-12/meta/validation"
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_meta_data,
+    "https://json-schema.org/draft/2020-12/meta/meta-data"
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_format_annotation,
+    "https://json-schema.org/draft/2020-12/meta/format-annotation"
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_content,
+    "https://json-schema.org/draft/2020-12/meta/content"
+  );
+}
+
+/**
+ * Load ALL downloaded meta-schemas into JetValidator instance
+ */
+export function loadAllMetaSchemas(jetValidator: any): void {
+  loadDraft07(jetValidator);
+  loadDraft202012(jetValidator);
+}
+```
+
+**What the Loader Does:**
+
+1. **Imports JSON Files** - Imports all downloaded meta-schema JSON files
+2. **Creates Load Functions** - One function per draft version
+3. **Registers with Multiple Keys** - Both full URL and short alias
+4. **Handles Sub-Schemas** - Automatically registers all vocabulary sub-schemas
+5. **Provides Convenience** - `loadAllMetaSchemas()` loads everything at once
+
+---
+
+#### Step 3: Load into JetValidator Instance
+
+Import and use the generated loader functions.
+
+**Example 1: Load All Meta-Schemas**
+
+```typescript
+// src/validation/setup.ts
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+
+// Create instance
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07", // Default fallback
+});
+
+// Load all downloaded meta-schemas
+loadAllMetaSchemas(jetValidator);
+
+// Export configured instance
+export { jetValidator };
+```
+
+```typescript
+// src/api/users.ts
+import { jetValidator } from "./validation/setup";
+
+const userSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Schema is validated against Draft-07
+const validate = jetValidator.compile(userSchema);
+```
+
+---
+
+**Example 2: Load Specific Drafts Only**
+
+```typescript
+import { JetValidator } from "jetvalidator";
+import { loadDraft07, loadDraft202012 } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator();
+
+// Load only the drafts you need
+loadDraft07(jetValidator);
+loadDraft202012(jetValidator);
+
+// Draft-06 not loaded, will throw error if used
+const schema = {
+  $schema: "https://json-schema.org/draft-06/schema",
+  type: "string",
+};
+
+try {
+  jetValidator.validateSchema(schema);
+} catch (error) {
+  console.error(error.message);
+  // Meta-schema "draft-06" is not loaded.
+  // Load it using: loadDraft06(jetValidator)
+}
+```
+
+---
+
+**Example 3: Application Structure**
+
+```typescript
+// config/validation.ts
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+
+export const createValidator = () => {
+  const jetValidator = new JetValidator({
+    allErrors: true,
+    validateSchema: true,
+    metaSchema: "draft-07",
+    verbose: process.env.NODE_ENV === "development",
+  });
+
+  loadAllMetaSchemas(jetValidator);
+
+  return jetValidator;
+};
+
+export const jetValidator = createValidator();
+```
+
+```typescript
+// schemas/user.schema.ts
+export const userSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  $id: "user",
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+    email: { type: "string", format: "email" },
+    name: { type: "string", minLength: 2 },
+  },
+  required: ["id", "email", "name"],
+};
+```
+
+```typescript
+// validators/user.validator.ts
+import { jetValidator } from "../config/validation";
+import { userSchema } from "../schemas/user.schema";
+
+// Register schema
+jetValidator.addSchema(userSchema);
+
+// Get compiled validator
+export const validateUser = jetValidator.getCompiledSchema("user");
+```
+
+```typescript
+// api/users.controller.ts
+import { validateUser } from "../validators/user.validator";
+
+export const createUser = (req, res) => {
+  const result = validateUser(req.body);
+
+  if (!result) {
+    return res.status(400).json({ errors: validateUser.errors });
+  }
+
+  // Process valid user...
+};
+```
+
+---
+
+**Example 4: Testing Setup**
+
+```typescript
+// tests/setup.ts
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+
+export const setupTestValidator = () => {
+  const jetValidator = new JetValidator({
+    validateSchema: true,
+    allErrors: true,
+    strict: true,
+  });
+
+  loadAllMetaSchemas(jetValidator);
+
+  return jetValidator;
+};
+```
+
+```typescript
+// tests/user.test.ts
+import { setupTestValidator } from "./setup";
+import { userSchema } from "../schemas/user.schema";
+
+describe("User Schema", () => {
+  let jetValidator;
+
+  beforeEach(() => {
+    jetValidator = setupTestValidator();
+  });
+
+  it("should have valid schema definition", () => {
+    const isValid = jetValidator.validateSchema(userSchema);
+    expect(isValid).toBe(true);
+  });
+
+  it("should validate correct user data", () => {
+    const validate = jetValidator.compile(userSchema);
+    const result = validate({
+      id: 1,
+      email: "test@example.com",
+      name: "Test User",
+    });
+
+    expect(result).toBe(true);
+  });
+});
+```
+
+---
+
+**Important Notes:**
+
+1. **One-Time Download:** You only need to run `jet-meta load` once. Commit the generated files to version control.
+
+2. **Offline-First:** After downloading, no network requests are needed. Everything is bundled in your application.
+
+3. **Tree-Shaking:** Only imported functions and their schemas are bundled. If you only load Draft-07, Draft 2020-12 schemas won't be in your bundle.
+
+4. **Type Safety:** The loader is TypeScript-compatible. All JSON files are properly typed.
+
+5. **Version Control:**
+
+```gitignore
+   # .gitignore
+   # ❌ DON'T ignore meta-schemas
+   # ✅ DO commit them
+   meta-schemas/
+```
+
+---
+
+### The Three-Tier Validation System
+
+JetValidator uses a sophisticated three-tier priority system to determine which meta-schema to use when validating schemas. This provides maximum flexibility while maintaining sensible defaults.
+
+**Priority Hierarchy:**
+
+```
+┌─────────────────────────────────────────┐
+│  🎯 PRIORITY 1 (HIGHEST)                │
+│  Method-Level Override                  │
+│  validateSchema(schema, { metaSchema }) │
+└─────────────────────────────────────────┘
+              ↓ (if not specified)
+┌─────────────────────────────────────────┐
+│  🎯 PRIORITY 2 (MEDIUM)                 │
+│  Schema's $schema Keyword               │
+│  { $schema: "draft-07" }                │
+└─────────────────────────────────────────┘
+              ↓ (if not specified)
+┌─────────────────────────────────────────┐
+│  🎯 PRIORITY 3 (LOWEST)                 │
+│  Instance Default                       │
+│  new JetValidator({ metaSchema: "..." })│
+└─────────────────────────────────────────┘
+```
+
+---
+
+#### Priority 1: Method-Level Override (Highest)
+
+Explicitly specify the meta-schema when calling validation methods.
+
+**Use Cases:**
+
+- Testing schema compatibility across drafts
+- Temporarily overriding schema's declared version
+- Debugging schema issues
+- Cross-version validation
+
+**Example 1: Override schema's declared version**
+
+```typescript
+const schema = {
+  $schema: "https://json-schema.org/draft-07/schema", // Schema says Draft-07
+  type: "string",
+};
+
+// Validate against Draft 2020-12 instead
+const isValid = jetValidator.validateSchema(schema, {
+  metaSchema: "draft/2020-12", // Priority 1 overrides Priority 2
+});
+```
+
+**Example 2: Test compatibility**
+
+```typescript
+const mySchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Test if schema works with different drafts
+const drafts = ["draft-06", "draft-07", "draft/2019-09", "draft/2020-12"];
+
+drafts.forEach((draft) => {
+  const isValid = jetValidator.validateSchema(mySchema, {
+    metaSchema: draft,
+  });
+
+  console.log(`${draft}: ${isValid ? "✓ Compatible" : "✗ Incompatible"}`);
+});
+
+// Output:
+// draft-06: ✓ Compatible
+// draft-07: ✓ Compatible
+// draft/2019-09: ✓ Compatible
+// draft/2020-12: ✓ Compatible
+```
+
+**Example 3: Compilation with override**
+
+```typescript
+const schema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "string",
+  minLength: 5,
+};
+
+// Compile with Draft 2020-12 validation
+const validate = jetValidator.compile(schema, {
+  metaSchema: "draft/2020-12", // Method-level override
+  validateSchema: true,
+});
+```
+
+**Example 4: Debug mode override**
+
+```typescript
+const debugValidateSchema = (schema, metaSchema) => {
+  console.log(`Validating with: ${metaSchema}`);
+
+  const isValid = jetValidator.validateSchema(schema, { metaSchema });
+
+  if (!isValid) {
+    console.error(`Schema invalid against ${metaSchema}`);
+  }
+
+  return isValid;
+};
+
+// Force specific version for debugging
+debugValidateSchema(problematicSchema, "draft-07");
+```
+
+---
+
+#### Priority 2: Schema's `$schema` Keyword (Medium)
+
+Auto-detect the meta-schema from the schema's `$schema` property.
+
+**Use Cases:**
+
+- Normal schema validation
+- Self-documenting schemas
+- Multi-draft projects
+- Version migration
+
+**Example 1: Auto-detection**
+
+```typescript
+const draft07Schema = {
+  $schema: "https://json-schema.org/draft-07/schema", // ← Auto-detected
+  type: "string",
+};
+
+const draft2020Schema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema", // ← Auto-detected
+  type: "string",
+};
+
+// No metaSchema parameter needed
+jetValidator.validateSchema(draft07Schema); // Uses Draft-07
+jetValidator.validateSchema(draft2020Schema); // Uses Draft 2020-12
+```
+
+**Example 2: Mixed versions in same application**
+
+```typescript
+// Legacy schema (Draft-06)
+const legacyUserSchema = {
+  $schema: "https://json-schema.org/draft-06/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Modern schema (Draft 2020-12)
+const modernUserSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+  unevaluatedProperties: false, // 2020-12 keyword
+};
+
+// Both validate correctly with their respective drafts
+jetValidator.validateSchema(legacyUserSchema); // Validates against Draft-06
+jetValidator.validateSchema(modernUserSchema); // Validates against 2020-12
+
+// Both can be compiled
+const validateLegacy = jetValidator.compile(legacyUserSchema);
+const validateModern = jetValidator.compile(modernUserSchema);
+```
+
+**Example 3: Version migration**
+
+```typescript
+// Old schema
+const v1Schema = {
+  $schema: "https://json-schema.org/draft-06/schema",
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+  },
+};
+
+// Migrated schema
+const v2Schema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema", // Updated version
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+  },
+};
+
+// Validation automatically uses correct draft
+console.log("V1 valid:", jetValidator.validateSchema(v1Schema));
+console.log("V2 valid:", jetValidator.validateSchema(v2Schema));
+```
+
+**Example 4: Schema library**
+
+```typescript
+// schemas/index.ts
+export const schemas = {
+  user: {
+    $schema: "https://json-schema.org/draft-07/schema",
+    type: "object",
+    properties: {
+      /* ... */
+    },
+  },
+  product: {
+    $schema: "https://json-schema.org/draft-07/schema",
+    type: "object",
+    properties: {
+      /* ... */
+    },
+  },
+  order: {
+    $schema: "https://json-schema.org/draft/2020-12/schema", // Newer draft
+    type: "object",
+    properties: {
+      /* ... */
+    },
+  },
+};
+
+// Validate all schemas (each uses its declared version)
+Object.entries(schemas).forEach(([name, schema]) => {
+  const isValid = jetValidator.validateSchema(schema).valid;
+  console.log(`${name}: ${isValid ? "✓" : "✗"}`);
+});
+```
+
+---
+
+#### Priority 3: Instance Default (Lowest)
+
+Fallback to the default meta-schema specified in constructor.
+
+**Use Cases:**
+
+- Project-wide standard
+- Schemas without `$schema` keyword
+- Consistent validation baseline
+- Legacy schema support
+
+**Example 1: Instance default**
+
+```typescript
+const jetValidator = new JetValidator({
+  metaSchema: "draft-07", // Priority 3: Instance default
+});
+
+loadDraft07(jetValidator);
+
+// Schema without $schema keyword
+const schema = {
+  // No $schema property
+  type: "string",
+  minLength: 5,
+};
+
+// Falls back to instance default (draft-07)
+jetValidator.validateSchema(schema); // Validates against Draft-07
+```
+
+**Example 2: Project standardization**
+
+```typescript
+// Project uses Draft-07 exclusively
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07", // All schemas default to Draft-07
+  strict: true,
+});
+
+loadDraft07(jetValidator);
+
+// Developers don't need to specify $schema
+const userSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+const productSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    price: { type: "number" },
+  },
+};
+
+// Both validate against Draft-07
+jetValidator.validateSchema(userSchema);
+jetValidator.validateSchema(productSchema);
+```
+
+**Example 3: Environment-specific defaults**
+
+```typescript
+// config/validation.ts
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+
+const createValidator = () => {
+  const metaSchema =
+    process.env.NODE_ENV === "production"
+      ? "draft-07" // Stable for production
+      : "draft/2020-12"; // Latest for development
+
+  const jetValidator = new JetValidator({
+    validateSchema: true,
+    metaSchema, // Environment-dependent default
+    verbose: process.env.NODE_ENV === "development",
+  });
+
+  loadAllMetaSchemas(jetValidator);
+
+  return jetValidator;
+};
+
+export const jetValidator = createValidator();
+```
+
+**Example 4: Multiple instances with different defaults**
+
+```typescript
+// Validator for legacy schemas
+const legacyValidator = new JetValidator({
+  metaSchema: "draft-06", // Default to Draft-06
+  strict: false,
+});
+loadDraft04(legacyValidator);
+
+// Validator for modern schemas
+const modernValidator = new JetValidator({
+  metaSchema: "draft/2020-12", // Default to 2020-12
+  strict: true,
+});
+loadDraft202012(modernValidator);
+
+// Use appropriate validator
+legacyValidator.validateSchema(oldSchema);
+modernValidator.validateSchema(newSchema);
+```
+
+---
+
+#### Complete Priority Example
+
+```typescript
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator({
+  metaSchema: "draft-06", // 🎯 PRIORITY 3: Instance default
+});
+
+loadAllMetaSchemas(jetValidator);
+
+const schema1 = {
+  // No $schema keyword
+  type: "string",
+};
+
+const schema2 = {
+  $schema: "https://json-schema.org/draft-07/schema", // 🎯 PRIORITY 2
+  type: "string",
+};
+
+const schema3 = {
+  $schema: "https://json-schema.org/draft/2020-12/schema", // 🎯 PRIORITY 2
+  type: "string",
+};
+
+// Case 1: No $schema, no override → Uses Priority 3 (draft-06)
+jetValidator.validateSchema(schema1);
+
+// Case 2: Has $schema, no override → Uses Priority 2 (draft-07)
+jetValidator.validateSchema(schema2);
+
+// Case 3: Has $schema, with override → Uses Priority 1 (draft-06)
+jetValidator.validateSchema(schema2, {
+  metaSchema: "draft-06", // 🎯 PRIORITY 1: Overrides schema's draft-07
+});
+
+// Case 4: Has $schema (2020-12), override to draft-07 → Uses Priority 1
+jetValidator.validateSchema(schema3, {
+  metaSchema: "draft-07", // 🎯 PRIORITY 1: Overrides schema's 2020-12
+});
+```
+
+**Summary Table:**
+
+| Schema `$schema` | Method Override | Result                          |
+| ---------------- | --------------- | ------------------------------- |
+| Not specified    | Not specified   | Instance default                |
+| `draft-07`       | Not specified   | `draft-07` (from schema)        |
+| `draft-07`       | `draft/2020-12` | `draft/2020-12` (override wins) |
+| Not specified    | `draft/2020-12` | `draft/2020-12` (override wins) |
+
+---
+
+### Schema Validation in Depth
+
+#### `validateSchemaSync(schema, options?)` and `validateSchemaAsync(schema, options?)`
+
+Validate that a JSON Schema is correctly structured according to a JSON Schema specification.
+The both method do the exact same thing execep the `validateSchemaAsync` methods allows asyncronous metaschema compilation and schema validation.
+
+**Signature:**
+
+```typescript
+validateSchemaSync(
+  schema: SchemaDefinition,
+  options?: ValidatorOptions
+): ValidationResult
+
+validateSchemaAsync(
+  schema: SchemaDefinition,
+  options?: ValidatorOptions
+): Promise<ValidationResult>
+```
+
+**Parameters:**
+
+| Parameter            | Type               | Required | Description                       |
+| -------------------- | ------------------ | -------- | --------------------------------- |
+| `schema`             | `SchemaDefinition` | Yes      | The JSON Schema to validate       |
+| `options`            | `ValidatorOptions`           | No       | Validation options                |
+| `options.metaSchema` | `string`           | No       | Override which meta-schema to use |
+
+**Returns:** `ValidationResult`
+
+- `valid` - Validation result
+- `errors?` - Schema Validation Errors
+
+**Throws:**
+
+- `Error` if specified meta-schema is not loaded or meta-schema compilation fails.
+
+**Behavior:**
+
+1. Determines meta-schema using three-tier priority system
+2. Retrieves the meta-schema from internal registry
+3. Compiles the meta-schema (cached if previously compiled)
+4. Validates the input schema against the meta-schema
+5. Returns validation result
+
+---
+
+**Example 1: Basic validation**
+
+```typescript
+import { JetValidator } from "jetvalidator";
+import { loadDraft07 } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator({});
+
+loadDraft07(jetValidator);
+
+// ✅ Valid schema
+const validSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 2 },
+    age: { type: "number", minimum: 0 },
+  },
+  required: ["name"],
+};
+
+const isValid = jetValidator.validateSchemaSync(validSchema).valid;
+console.log(isValid); // true
+```
+
+---
+
+**Example 2: Invalid schema detection**
+
+```typescript
+// ❌ Invalid type value
+const invalidSchema1 = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "invalid-type", // Not a valid JSON Schema type
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+const isValid1 = jetValidator.validateSchemaSync(invalidSchema1).valid;
+console.log(isValid1); // false
+
+// ❌ Invalid minimum value (should be number)
+const invalidSchema2 = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "number",
+  minimum: "10", // String instead of number
+};
+
+const isValid2 = jetValidator.validateSchemaSync(invalidSchema2).valid;
+console.log(isValid2); // false
+
+// ❌ Invalid keyword
+const invalidSchema3 = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "string",
+  minLenght: 5, // Typo: should be 'minLength'
+};
+
+const isValid3 = jetValidator.validateSchemaSync(invalidSchema3).valid;
+console.log(isValid3); // false (additionalProperties: false in strict mode)
+```
+
+**Example 3: error logging**
+
+```typescript
+const jetValidator = new JetValidator({});
+
+loadDraft07(jetValidator);
+
+const invalidSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    age: {
+      type: "number",
+      minimum: "18", // Should be number, not string
+    },
+  },
+};
+
+const isValid = jetValidator.validateSchemaSync(invalidSchema);
+console.log(isValid.errors);
+
+// Console output:
+// Schema validation failed against draft-07:
+// [
+//   {
+//     keyword: 'type',
+//     dataPath: '/age/minimum',
+//     schemaPath: '#////',
+//     message: 'should be number',
+//     expected: 'a valid number'
+//   }
+// ]
+
+console.log(isValid.valid); // false
+```
+
+**Example 4: Draft-specific validation**
+
+```typescript
+import { loadAllMetaSchemas } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator();
+loadAllMetaSchemas(jetValidator);
+
+// Draft-07 schema
+const draft07Schema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+  if: { properties: { name: { const: "admin" } } }, // Draft-07 keyword
+  then: { required: ["password"] },
+};
+
+console.log(jetValidator.validateSchemaSync(draft07Schema).valid); // true
+
+// Draft 2020-12 schema
+const draft2020Schema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+  unevaluatedProperties: false, // Draft 2020-12 keyword
+};
+
+console.log(jetValidator.validateSchemaSync(draft2020Schema).valid); // true
+
+// Using 2020-12 keyword in Draft-07 schema
+const incompatibleSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  unevaluatedProperties: false, // Not valid in Draft-07
+};
+
+console.log(jetValidator.validateSchemaSync(incompatibleSchema).valid); // false
+```
+
+**Example 5: Override meta-schema version**
+
+```typescript
+const schema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Validate against declared version (Draft-07)
+const validDraft07 = jetValidator.validateSchemaSync(schema).valid;
+console.log("Valid as Draft-07:", validDraft07); // true
+
+// Test compatibility with Draft 2020-12
+const validDraft2020 = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft/2020-12",
+}).valid;
+console.log("Valid as Draft 2020-12:", validDraft2020); // true
+
+// Test compatibility with Draft-06
+const validDraft04 = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-06",
+}).valid;
+console.log("Valid as Draft-06:", validDraft04); // May be false if using newer keywordsExample
+```
+
+**6: Automatic validation before compilation**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true, // Enable automatic validation
+  metaSchema: "draft-07",
+});
+
+loadDraft07(jetValidator);
+
+// ✅ Valid schema - compiles successfully
+const validSchema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email" },
+  },
+};
+
+const validate1 = jetValidator.compile(validSchema);
+// Schema validated automatically before compilation
+
+// ❌ Invalid schema - compilation throws error
+const invalidSchema = {
+  type: "invalid-type", // Invalid type value
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+try {
+  const validate2 = jetValidator.compile(invalidSchema);
+} catch (error) {
+  console.error(error.message);
+  // "Schema validation failed. Cannot compile invalid schema."
+}
+```
+
+**Example 7: Conditional validation**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: process.env.NODE_ENV !== "production", // Only in dev/test
+});
+
+if (jetValidator.options.validateSchema) {
+  loadAllMetaSchemas(jetValidator);
+}
+
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// In development: validates schema
+// In production: skips validation for performance
+const validate = jetValidator.compile(schema);
+```
+
+**Example 8: Schema validation in tests**
+
+```typescript
+// tests/schemas.test.ts
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+import * as schemas from "../schemas";
+
+describe("Schema Validation", () => {
+  let jetValidator;
+
+  beforeAll(() => {
+    jetValidator = new JetValidator({ });
+    loadAllMetaSchemas(jetValidator);
+  });
+
+  it("should validate all application schemas", () => {
+    Object.entries(schemas).forEach(([name, schema]) => {
+      const isValid = jetValidator.validateSchemaSync(schema).valid;
+      expect(isValid).toBe(true);
+
+      if (!isValid) {
+        console.error(`Invalid schema: ${name}`);
+      }
+    });
+  });
+
+  it("should validate user schema against Draft-07", () => {
+    const isValid = jetValidator.validateSchemaSync(schemas.userSchema).valid;
+    expect(isValid).toBe(true);
+  });
+
+  it("should detect invalid schema", () => {
+    const invalidSchema = {
+      type: "invalid",
+      properties: {},
+    };
+
+    const isValid = jetValidator.validateSchemaSync(invalidSchema, {
+      metaSchema: "draft-07",
+    }).valid;
+
+    expect(isValid).toBe(false);
+  });
+});
+```
+
+**Example 9: CI/CD schema validation**
+
+```typescript
+// scripts/validate-schemas.ts
+import { JetValidator } from "jetvalidator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+import * as schemas from "../schemas";
+
+const jetValidator = new JetValidator({
+  verbose: true,
+});
+
+loadAllMetaSchemas(jetValidator);
+
+let hasErrors = false;
+
+console.log("Validating application schemas...\n");
+
+Object.entries(schemas).forEach(([name, schema]) => {
+  const isValid = jetValidator.validateSchemaSync(schema).valid;
+
+  if (isValid) {
+    console.log(`✓ ${name}`);
+  } else {
+    console.error(`✗ ${name} - INVALID`);
+    hasErrors = true;
+  }
+});
+
+if (hasErrors) {
+  console.error("\n❌ Schema validation failed!");
+  process.exit(1);
+} else {
+  console.log("\n✅ All schemas are valid");
+  process.exit(0);
+}
+json;
+```
+
+```json
+// package.json
+{
+  "scripts": {
+    "validate:schemas": "tsx scripts/validate-schemas.ts",
+    "test": "npm run validate:schemas && jest"
+  }
+}
+```
+
+**Example 10: Error handling**
+
+```typescript
+import { loadDraft07 } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator();
+loadDraft07(jetValidator);
+
+const schema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema", // Not loaded
+  type: "string",
+};
+
+try {
+  jetValidator.validateSchemaSync(schema);
+} catch (error) {
+  console.error(error.message);
+  // Meta-schema "https://json-schema.org/draft/2020-12/schema" is not loaded.
+  // Load it using: loadDraft202012(jetValidator) or loadAllMetaSchemas(jetValidator)
+  // Or disable validation: new JetValidator({ validateSchemaSync: false })
+}
+```
+
+### Advanced Schema Validation Control
+
+JetValidator provides two levels of schema validation control: automatic validation through compilation methods, and manual validation through dedicated methods.
+
+#### Automatic vs Manual Validation
+
+**Automatic Validation (via compile methods):**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true, // Enable automatic validation
+  metaSchema: "draft-07",
+});
+
+// Validates schema automatically before compilation
+const validate = jetValidator.compile(schema);
+```
+
+**Manual Validation (explicit control):**
+
+```typescript
+// Validate schema manually with full control
+const result = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-07",
+  strictSchema: true,
+});
+
+if (result.valid) {
+  // Compile without re-validating
+  const validate = jetValidator.compile(schema, {
+    validateSchema: false, // ⚠️ IMPORTANT: Prevent double validation - enabled by default internally
+  });
+}
+```
+
+---
+
+#### `validateSchemaSync()` and `validateSchemaAsync()`
+
+These methods give you **complete control** over schema validation, including how the meta-schema itself is compiled.
+
+**Signatures:**
+
+```typescript
+validateSchemaSync(
+  schema: SchemaDefinition,
+  options?: ValidatorOptions
+): { valid: boolean; errors: any }
+
+validateSchemaAsync(
+  schema: SchemaDefinition,
+  options?: ValidatorOptions
+): Promise<{ valid: boolean; errors: any }>
+```
+
+**Key Differences from Automatic Validation:**
+
+| Feature               | Automatic (via compile)             | Manual (validateSchema\*)                 |
+| :-------------------- | :---------------------------------- | :---------------------------------------- |
+| **Control**           | Limited                             | Full control over meta-schema compilation |
+| **Configuration**     | Override any option per validation           | Override any option per validation        |
+| **Caching**           | You control caching via options                      | You control caching via options           |
+| **Return Value**      | Throws or returns failing validator | Returns result object with errors         |
+
+
+---
+
+**Example 1: Full control over meta-schema compilation**
+
+```typescript
+import { loadDraft07 } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator();
+loadDraft07(jetValidator);
+
+// Validate schema with specific meta-schema compilation options
+const result = jetValidator.validateSchemaSync(userSchema, {
+  metaSchema: "draft-07",
+  allErrors: true, // Collect all meta-schema validation errors
+  verbose: true, // Log detailed errors
+  strictSchema: false, // Don't throw on invalid schema
+  cache: false, // Don't cache meta-schema validator
+});
+
+if (!result.valid) {
+  console.log("Schema errors:", result.errors);
+  // Handle invalid schema gracefully
+}
+
+// Now compile without re-validating
+const validate = jetValidator.compile(userSchema, {
+  validateSchema: false, // ⚠️ Skip validation - already done
+});
+```
+
+---
+
+**Example 2: Why use manual validation**
+
+```typescript
+// Scenario: You want to verify all schemas are correct without compiling them
+
+const jetValidator = new JetValidator();
+loadAllMetaSchemas(jetValidator);
+
+// Critical schema - strict validation
+const criticalResult = jetValidator.validateSchemaSync(paymentSchema, {
+  metaSchema: "draft/2020-12",
+  allErrors: true,
+  strictSchema: true, // Throw on invalid
+  strict: true,
+  verbose: true,
+});
+
+// Internal schema - lenient validation
+const internalResult = jetValidator.validateSchemaSync(internalSchema, {
+  metaSchema: "draft-07",
+  allErrors: false, // Fail fast
+  strictSchema: false, // Don't throw
+  strict: false,
+  verbose: false,
+});
+
+// Later on
+// Compile both (validation already done)
+const validatePayment = jetValidator.compile(paymentSchema, {
+  validateSchema: false,
+});
+
+const validateInternal = jetValidator.compile(internalSchema, {
+  validateSchema: false,
+});
+```
+
+---
+
+**Example 3: Preventing double validation**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true, // Instance default
+  metaSchema: "draft-07",
+});
+
+// ❌ WRONG: Schema gets validated twice
+const result = jetValidator.validateSchemaSync(schema);
+const validate = jetValidator.compile(schema); // Validates again!
+
+// ✅ CORRECT: Validate once, then compile
+const result = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-07",
+});
+
+if (result.valid) {
+  const validate = jetValidator.compile(schema, {
+    validateSchema: false, // Skip - already validated
+  });
+}
+```
+
+---
+
+**Example 4: Custom validation pipeline**
+
+```typescript
+class SchemaValidator {
+  constructor(private jetValidator: JetValidator) {}
+
+  validateAndCompile(schema: any, options?: any) {
+    // Step 1: Manual validation with custom options
+    const validationResult = this.jetValidator.validateSchemaSync(schema, {
+      metaSchema: options?.metaSchema || "draft-07",
+      allErrors: true,
+      strictSchema: false,
+      verbose: process.env.NODE_ENV === "development",
+    });
+
+    // Step 2: Handle validation errors
+    if (!validationResult.valid) {
+      this.logSchemaErrors(validationResult.errors);
+
+      if (options?.strict) {
+        throw new Error("Schema validation failed");
+      }
+
+      // Return a validator that always fails
+      return (data: any) => validationResult;
+    }
+
+    // Step 3: Compile without re-validating
+    return this.jetValidator.compile(schema, {
+      ...options,
+      validateSchema: false, // Already validated
+    });
+  }
+
+  private logSchemaErrors(errors: any) {
+    // Custom error logging logic
+    console.error("Schema validation errors:", errors);
+  }
+}
+```
+
+---
+
+#### Async Schema Validation and Meta-Schema Loading
+
+When meta-schemas are **not pre-loaded**, you must use async methods to fetch them externally.
+
+**Two Async Scenarios:**
+
+1. **Async meta-schema loading** - Meta-schema isn't in registry, needs fetching
+2. **Async schema resolution** - Schema has external `$ref` that needs fetching
+
+**Example 1: External meta-schema loading**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  loadSchema: async (uri) => {
+    // Fetch schema from external source
+    const response = await fetch(uri);
+    return response.json();
+  },
+});
+
+// Meta-schema not loaded locally
+const schema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// ❌ WRONG: Sync compile will fail (meta-schema not loaded)
+try {
+  const validate = jetValidator.compile(schema);
+} catch (error) {
+  console.error('Meta-schema "draft-07" is not loaded.');
+}
+
+// ✅ CORRECT: Use async to fetch meta-schema
+const validate = await jetValidator.compileAsync(schema);
+// Meta-schema is fetched via loadSchema, validated, then schema compiled
+```
+
+---
+
+**Example 2: Manual async validation**
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    return response.json();
+  },
+});
+
+// Validate schema against external meta-schema
+const result = await jetValidator.validateSchemaAsync(schema, {
+  metaSchema: "https://example.com/my-custom-metaschema.json",
+  strictSchema: false,
+});
+
+if (result.valid) {
+  // Compile with async (meta-schema now cached)
+  const validate = await jetValidator.compileAsync(schema, {
+    validateSchema: false, // Already validated
+  });
+}
+```
+
+---
+
+**Example 3: When to use sync vs async**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+});
+
+loadAllMetaSchemas(jetValidator); // Pre-load all meta-schemas
+
+// ✅ Use SYNC when:
+// - All meta-schemas are pre-loaded
+// - You need synchronous validation
+const localSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "string",
+};
+const validate1 = jetValidator.compile(localSchema); // Sync works
+
+// ✅ Use ASYNC when:
+// - Meta-schema needs external loading
+// - Schema has external $refs
+// - Using loadSchema callback
+const externalSchema = {
+  $schema: "https://example.com/custom-meta.json", // Not loaded
+  type: "string",
+};
+const validate2 = await jetValidator.compileAsync(externalSchema); // Async required
+```
+
+---
+
+#### Meta-Schema Validation Caching
+
+Meta-schema validators are **automatically cached** when using compile methods, but you can control this behavior when using manual validation.
+
+**Default Caching Behavior:**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+  cache: true, // Default: cache meta-schema validators
+});
+
+loadDraft07(jetValidator);
+
+// First compile: meta-schema validated and cached
+const validate1 = jetValidator.compile(schema1);
+
+// Second compile: uses cached meta-schema validator
+const validate2 = jetValidator.compile(schema2);
+// Meta-schema validation is instant (cached)
+```
+
+**Controlling Cache with Manual Validation:**
+
+```typescript
+// Disable caching for specific validation
+const result = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-07",
+  cache: false, // Don't cache this meta-schema validator
+});
+
+// Force cache refresh
+const result2 = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-07",
+  cache: true, // Compile and cache fresh validator
+});
+```
+
+---
+
+**Example 1: Cache control for testing**
+
+```typescript
+describe("Schema Validation", () => {
+  let jetValidator;
+
+  beforeEach(() => {
+    jetValidator = new JetValidator({
+      validateSchema: true,
+      cache: true,
+    });
+    loadDraft07(jetValidator);
+  });
+
+  it("should use cached meta-schema validator", () => {
+    // First validation compiles and caches
+    const result1 = jetValidator.validateSchemaSync(schema1);
+
+    // Second validation uses cache
+    const result2 = jetValidator.validateSchemaSync(schema2);
+    // Instant - no recompilation
+  });
+
+  it("should allow cache bypass for testing", () => {
+    // Test with fresh meta-schema compilation
+    const result = jetValidator.validateSchemaSync(schema, {
+      cache: false, // Force fresh compilation
+    });
+  });
+});
+```
+
+---
+
+**Example 2: Performance optimization**
+
+```typescript
+// Production: Cache everything
+const prodSchema = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+  cache: true, // Maximum performance
+});
+
+// Development: Disable cache for hot reload
+const devSchema = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+  cache: false, // Always fresh
+});
+```
+
+---
+
+#### The `strictSchema` Mode
+
+The `strictSchema` option controls how JetValidator handles schemas that fail meta-schema validation.
+
+**Behavior:**
+
+| strictSchema | Validation Fails    | Result                                                |
+| :----------- | :------------------ | :---------------------------------------------------- |
+| `true`       | During compile      | **Throws Error** - stops compilation                  |
+| `false`      | During compile      | **Returns failing validator** - compilation continues |
+| `true`       | In validateSchema\* | **Throws Error**                                      |
+| `false`      | In validateSchema\* | **Returns result object** with errors                 |
+
+---
+
+**Default Behavior:**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  strictSchema: true, // Default: throw on invalid schema
+});
+
+loadDraft07(jetValidator);
+
+const invalidSchema = {
+  type: "invalid-type", // Invalid
+  properties: {},
+};
+
+// Throws immediately
+try {
+  const validate = jetValidator.compile(invalidSchema);
+} catch (error) {
+  console.error("Schema compilation failed:", error.message);
+  // Schema is invalid and cannot be compiled
+}
+```
+
+---
+
+### Schema Validation Modes
+
+**Lenient Mode (strictSchema: false):**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  strictSchema: false, // Don't throw, return failing validator
+});
+
+loadDraft07(jetValidator);
+
+const invalidSchema = {
+  type: "invalid-type", // Invalid
+  properties: {},
+};
+
+// Returns a validator that always fails
+const validate = jetValidator.compile(invalidSchema);
+
+// Validator always returns schema validation errors
+const result = validate({ name: "test" });
+console.log(result); // false
+console.log(validate.errors); // Schema meta-validation errors
+console.log(validate.errors[0].metaSchemaError); // true
+// User data is never actually validated - schema itself is broken
+```
+
+---
+
+**Example 1: Graceful degradation**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  strictSchema: false, // Graceful handling
+  verbose: true,
+});
+
+loadDraft07(jetValidator);
+
+const compileWithFallback = (schema, fallbackSchema) => {
+  const validate = jetValidator.compile(schema);
+
+  // Test if it's a failing validator
+  const testResult = validate({});
+
+  if (!testResult && validator.errors[0]["metaSchemaError"] === true;) {
+    console.warn("Schema invalid, using fallback");
+    return jetValidator.compile(fallbackSchema, {
+      validateSchema: false, // Trust fallback schema
+    });
+  }
+
+  return validate;
+};
+
+const validator = compileWithFallback(userProvidedSchema, defaultSchema);
+```
+
+---
+
+**Example 2: Development vs Production**
+
+```typescript
+const createJetValidator = () => {
+  const isDev = process.env.NODE_ENV === "development";
+
+  return new JetValidator({
+    validateSchema: true,
+    strictSchema: isDev, // Strict in dev, lenient in prod
+    verbose: isDev,
+  });
+};
+
+const jetValidator = createJetValidator();
+loadAllMetaSchemas(jetValidator);
+
+// Development: Throws immediately on invalid schema (fast feedback)
+// Production: Returns failing validator (graceful degradation)
+```
+
+---
+
+**Example 3: Using with manual validation**
+
+```typescript
+const jetValidator = new JetValidator();
+loadDraft07(jetValidator);
+
+// Manual validation with strictSchema
+const result = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-07",
+  strictSchema: true, // Throw if invalid
+});
+// Throws if schema invalid
+
+// Manual validation without strictSchema
+const result2 = jetValidator.validateSchemaSync(schema, {
+  metaSchema: "draft-07",
+  strictSchema: false, // Return result
+});
+
+if (!result2.valid) {
+  console.log("Schema has errors:", result2.errors);
+  // Handle invalid schema gracefully
+}
+```
+
+---
+
+**Example 4: Using metaSchemaError**
+
+```typescript
+const jetValidator = new JetValidator();
+loadDraft07(jetValidator);
+
+const validate = jetValidator.compile(invalidSchema, {
+  metaSchema: "draft-07",
+  strictSchema: false,
+});
+
+const result = validate({ name: "test" });
+if (validator.errors[0]["metaSchemaError"]) {
+  console.log("This error is a metaschema error from failed schema validation");
+}
+// The metaSchemaError property is added to error object so when strict schema is false users can differentiate which is a validation error or a metaschema error.
+```
+
+---
+
+**Example 5: Runtime schema validation strategy**
+
+```typescript
+class SchemaManager {
+  constructor(private jetValidator: JetValidator) {}
+
+  /**
+   * Compile user-provided schema with validation
+   */
+  compileUserSchema(schema: any) {
+    // Validate manually first
+    const validation = this.jetValidator.validateSchemaSync(schema, {
+      metaSchema: "draft-07",
+      strictSchema: false, // Don't throw
+      allErrors: true,
+    });
+
+    if (!validation.valid) {
+      // Log errors for debugging
+      console.error("User schema validation failed:", validation.errors);
+
+      // Return a validator that explains the issue
+      return (data: any) => ({
+        valid: false,
+        errors: {
+          message: "Cannot validate - schema is malformed",
+          schemaErrors: validation.errors,
+        },
+      });
+    }
+
+    // Schema valid - compile normally
+    return this.jetValidator.compile(schema, {
+      validateSchema: false, // Already validated
+    });
+  }
+
+  /**
+   * Compile trusted internal schema
+   */
+  compileInternalSchema(schema: any) {
+    // Internal schemas are trusted - strict validation
+    return this.jetValidator.compile(schema, {
+      validateSchema: true,
+      strictSchema: true, // Throw on any issues
+      metaSchema: "draft-07",
+    });
+  }
+}
+```
+
+---
+
+**When to use strictSchema: true vs false:**
+
+**Use `strictSchema: true` when:**
+
+- Compiling internal/trusted schemas
+- In development/testing environments
+- You want fast feedback on schema errors
+- Schema errors are programming bugs
+
+**Use `strictSchema: false` when:**
+
+- Compiling user-provided schemas
+- Building schema validation tools
+- You need graceful error handling
+- In production with external schemas
+
+---
+
+### Meta-Schema API Reference
+
+**Adding Meta-Schemas**
+| Method | Signature | Returns | Description |
+| :--- | :--- | :--- | :--- |
+| `addMetaSchema` | `(schema: SchemaDefinition, key?: string)` | `this` | Register a meta-schema |
+| **Validating Schemas** | | | |
+| `validateSchemaSync` | `(schema: SchemaDefinition, options?: ValidatorOptions)` | `ValidationResult` | Validate schema synchronously with full control |
+| `validateSchemaAsync` | `(schema: SchemaDefinition, options?: ValidatorOptions)` | `Promise<ValidationResult>` | Validate schema asynchronously, loading external meta-schemas |
+
+### Meta-Schema Configuration
+
+#### Instance-Level Configuration
+
+Configure meta-schema behavior when creating a JetValidator instance.
+
+**Configuration Options:**
+
+```typescript
+interface ValidatorOptions {
+  // Enable/disable schema validation
+  validateSchema?: boolean; // Default: true
+
+  // Default meta-schema for schemas without $schema
+  metaSchema: string; // Default: ''
+
+  // Show detailed error information
+  verbose?: boolean; // Default: false
+}
+```
+
+**Example 1: Enable schema validation with default**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true, // Enable validation
+  metaSchema: "draft-07", // Default to Draft-07
+  verbose: false, // Don't log errors
+});
+
+loadDraft07(jetValidator);
+
+// Schemas without $schema use Draft-07
+const schema = {
+  type: "string", // No $schema keyword
+};
+
+jetValidator.validateSchema(schema); // Validates against Draft-07
+```
+
+**Example 2: Disable schema validation for production**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: false, // Skip validation for performance
+});
+
+// No need to load meta-schemas
+
+// Compiles without validation
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+});
+```
+
+**Example 3: Development vs Production configuration**
+
+```typescript
+const createJetValidator = () => {
+  const isDevelopment = process.env.NODE_ENV === "development";
+
+  const jetValidator = new JetValidator({
+    validateSchema: isDevelopment, // Only validate in development
+    metaSchema: "draft-07",
+    verbose: isDevelopment, // Detailed errors in development
+    allErrors: isDevelopment, // Collect all errors in development
+    strict: !isDevelopment, // Strict in production
+  });
+
+  if (isDevelopment) {
+    loadAllMetaSchemas(jetValidator);
+  }
+
+  return jetValidator;
+};
+
+export const jetValidator = createJetValidator();
+```
+
+**Example 4: Verbose error logging**
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+  verbose: true, // Enable detailed console logging
+});
+
+loadDraft07(jetValidator);
+
+const invalidSchema = {
+  type: "object",
+  properties: {
+    age: {
+      type: "number",
+      minimum: "18", // Invalid: should be number
+    },
+  },
+};
+
+jetValidator.validateSchema(invalidSchema);
+
+// Console output:
+// Schema validation failed against draft-07:
+// [
+//   {
+//     keyword: 'type',
+//     dataPath: '/age/minimum',
+//     schemaPath: '#/properties/minimum/type',
+//     message: 'should be number',
+//   }
+// ]
+```
+
+#### Compilation-Level Configuration
+
+Override instance configuration when compiling schemas.
+
+**Example 1: Override meta-schema per compilation**
+
+typescript
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07", // Instance default
+});
+
+loadAllMetaSchemas(jetValidator);
+
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// Compile with instance default (Draft-07)
+const validate1 = jetValidator.compile(schema);
+
+// Compile with Draft 2020-12 validation
+const validate2 = jetValidator.compile(schema, {
+  metaSchema: "draft/2020-12", // Override
+});
+
+// Disable validation for this compilation
+const validate3 = jetValidator.compile(schema, {
+  validateSchema: false, // Skip validation
+});
+```
+
+---
+
+**Example 2: Per-schema validation strategy**
+
+typescript
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+});
+
+loadAllMetaSchemas(jetValidator);
+
+// Strict validation for critical schemas
+const userValidator = jetValidator.compile(userSchema, {
+  validateSchema: true,
+  metaSchema: "draft/2020-12",
+  strict: true,
+  allErrors: true,
+});
+
+// Lenient validation for internal schemas
+const internalValidator = jetValidator.compile(internalSchema, {
+  validateSchema: false, // Skip validation
+  strict: false,
+  coerceTypes: true,
+});
+```
+
+---
+
+**Example 3: Testing different meta-schemas**
+
+typescript
+
+```typescript
+const testSchemaCoverage = (schema) => {
+  const drafts = ["draft-06", "draft-07", "draft/2019-09", "draft/2020-12"];
+
+  const results = {};
+
+  drafts.forEach((draft) => {
+    try {
+      const validate = jetValidator.compile(schema, {
+        metaSchema: draft,
+        validateSchema: true,
+      });
+      results[draft] = "compatible";
+    } catch (error) {
+      results[draft] = "incompatible";
+    }
+  });
+
+  return results;
+};
+
+const mySchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+const coverage = testSchemaCoverage(mySchema);
+console.log(coverage);
+// {
+//   'draft-06': 'compatible',
+//   'draft-07': 'compatible',
+//   'draft/2019-09': 'compatible',
+//   'draft/2020-12': 'compatible'
+// }
+```
+
+---
+
+#### Built-in Aliases
+
+JetValidator provides convenient short aliases for meta-schema URIs to reduce verbosity.
+
+**Alias Mapping:**
+| Short Alias | Full URI |
+| :--- | :--- |
+| `draft-06` | `https://json-schema.org/draft-06/schema` |
+| `draft-07` | `https://json-schema.org/draft-07/schema` |
+| `draft/2019-09` | `https://json-schema.org/draft/2019-09/schema` |
+| `draft/2020-12` | `https://json-schema.org/draft/2020-12/schema` |
+
+---
+
+**Example 1: Using aliases**
+
+typescript
+
+```typescript
+// These are equivalent:
+
+// Full URI
+jetValidator.validateSchema(schema, {
+  metaSchema: "https://json-schema.org/draft-07/schema",
+});
+
+// Short alias
+jetValidator.validateSchema(schema, {
+  metaSchema: "draft-07", // Much shorter!
+});
+```
+
+---
+
+**Example 2: Aliases in constructor**
+
+typescript
+
+```typescript
+// Full URI (verbose)
+const jetValidator1 = new JetValidator({
+  metaSchema: "https://json-schema.org/draft-07/schema",
+});
+
+// Short alias (cleaner)
+const jetValidator2 = new JetValidator({
+  metaSchema: "draft-07", // Preferred
+});
+```
+
+---
+
+**Example 3: Aliases work everywhere**
+
+typescript
+
+```typescript
+// In validateSchema
+jetValidator.validateSchema(schema, { metaSchema: "draft-07" });
+
+// In compile
+jetValidator.compile(schema, { metaSchema: "draft-07" });
+
+// In compileAsync
+await jetValidator.compileAsync(schema, { metaSchema: "draft-07" });
+
+// In constructor
+new JetValidator({ metaSchema: "draft-07" });
+```
+
+---
+
+**Example 4: Alias resolution**
+
+typescript
+
+```typescript
+// Internally, aliases are resolved to full URIs
+const jetValidator = new JetValidator();
+
+// When you use an alias
+jetValidator.validateSchema(schema, { metaSchema: "draft-07" });
+
+// JetValidator resolves it to:
+// 'https://json-schema.org/draft-07/schema'
+
+// And looks up the meta-schema by the full URI
+```
+
+---
+
+**Example 5: Custom validation helper with aliases**
+
+typescript
+
+```typescript
+const validateWithDraft = (schema, draft) => {
+  const aliases = {
+    "6": "draft-06",
+    "7": "draft-07",
+    "2019": "draft/2019-09",
+    "2020": "draft/2020-12",
+  };
+
+  const metaSchema = aliases[draft] || draft;
+
+  return jetValidator.validateSchema(schema, { metaSchema });
+};
+
+// Usage
+validateWithDraft(mySchema, "7"); // Uses draft-07
+validateWithDraft(mySchema, "2020"); // Uses draft/2020-12
+```
+
+---
+
+### Meta-Schema API Reference
+
+**Adding Meta-Schemas**
+| Method | Signature | Returns | Description |
+| :--- | :--- | :--- | :--- |
+| `addMetaSchema` | `(schema: SchemaDefinition, key?: string)` | `this` | Register a meta-schema |
+| **Validating Schemas** | | | |
+| `validateSchema` | `(schema: SchemaDefinition, options?: ValidatorOptions)` | `boolean` | Validate a schema against meta-schema |
+
+**Configuration Options**
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `validateSchema` | `boolean` | `true` | Enable schema validation before compilation |
+| `metaSchema` | `string` | `''` | Default meta-schema URI or alias |
+| `verbose` | `boolean` | `false` | Log detailed validation errors |
+
+**CLI Commands**
+| Command | Description |
+| :--- | :--- |
+| `jet-meta load <version> [dir]` | Download meta-schemas to directory |
+
+**Loader Functions (Auto-generated):**
+| Function | Description |
+| :--- | :--- |
+| `loadDraft06(jetValidator)` | Load JSON Schema Draft-06 meta-schemas |
+| `loadDraft07(jetValidator)` | Load JSON Schema Draft-07 meta-schemas |
+| `loadDraft201909(jetValidator)` | Load JSON Schema Draft 2019-09 meta-schemas |
+| `loadDraft202012(jetValidator)` | Load JSON Schema Draft 2020-12 meta-schemas |
+| `loadAllMetaSchemas(jetValidator)` | Load all downloaded meta-schemas |
+
+**Built-in Aliases:**
+| Alias | Full URI |
+| :--- | :--- |
+| `draft-06` | `https://json-schema.org/draft-06/schema` |
+| `draft-07` | `https://json-schema.org/draft-07/schema` |
+| `draft/2019-09` | `https://json-schema.org/draft/2019-09/schema` |
+| `draft/2020-12` | `https://json-schema.org/draft/2020-12/schema` |
+
+---

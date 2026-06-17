@@ -1,0 +1,280 @@
+---
+title: "Error Handling"
+description: "Inspect validation errors, hierarchical error trees, and utility methods."
+---
+
+# Error Handling
+
+### Error Object Structure
+
+typescript
+
+```typescript
+interface ValidationResult {
+  valid: boolean;
+  errors?: ValidationError[];
+}
+
+interface ValidationError {
+  dataPath: string; // Path to invalid data (e.g., "/user/email")
+  schemaPath: string; // Path in schema (e.g., "#/properties/user/properties/email")
+  keyword: string; // Validation rule that failed (e.g., "format")
+  value?: any; // Actual value (only with verbose: true)
+  expected?: string; // Expected value/type
+  message: string; // Human-readable error message
+}
+```
+
+### Basic Error Examples
+
+**Type validation error:**
+
+typescript
+
+```typescript
+const jetValidator = new JetValidator();
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    age: { type: "number" },
+  },
+});
+
+validate({ age: "not-a-number" }); // false
+console.log(validate.errors);
+// [{
+//     dataPath: '/age',
+//     schemaPath: '#/properties/age/type',
+//     keyword: 'type',
+//     expected: 'number',
+//     message: 'Invalid type: expected number'
+// }]
+```
+
+**Minimum validation error:**
+
+typescript
+
+```typescript
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    age: { type: "number", minimum: 18 },
+  },
+});
+
+validate({ age: 15 }); // false
+console.log(validate.errors);
+// [{
+//     dataPath: '/age',
+//     schemaPath: '#/properties/age/minimum',
+//     keyword: 'minimum',
+//     expected: '18',
+//     message: 'Value must be at least 18'
+//   }]
+```
+
+**Format validation error:**
+
+typescript
+
+```typescript
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email" },
+  },
+});
+
+validate({ email: "invalid-email" }); // false
+console.log(validate.errors);
+//  [{
+//     dataPath: '/email',
+//     schemaPath: '#/properties/email/format',
+//     keyword: 'format',
+//     expected: 'email',
+//     message: 'Failed to validate value against format email'
+//   }]
+```
+
+---
+
+### Error Utility Methods
+
+jet-validator provides helper methods to work with errors:
+
+#### `logErrors(errors)`
+
+Logs error in a clean readable format:
+
+typescript
+
+```typescript
+const jetValidator = new JetValidator({ allErrors: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    country: { type: "string" },
+    postalCode: { type: "string" },
+  },
+  anyOf: [
+    {
+      properties: {
+        country: { const: "US" },
+        postalCode: { const: "111" },
+      },
+    },
+    {
+      properties: {
+        country: { const: "NG" },
+        postalCode: { const: "112" },
+      },
+    },
+    {
+      properties: {
+        country: { const: "UK" },
+        postalCode: { const: "113" },
+      },
+    },
+  ],
+  required: ["country", "postalCode"],
+});
+
+const result = validate({ country: "hi", postalCode: "yh" });
+jetValidator.logErrors(validate.errors);
+
+// ❌ Validation Failed: Data must validate against at least one schema
+//    - Data Path: /
+//    - Schema Path: #
+// ❌ Validation Failed: Value or type does not match US
+//    - Data Path: /country
+//    - Schema Path: #/anyOf/0/properties/country
+// ❌ Validation Failed: Value or type does not match 111
+//    - Data Path: /postalCode
+//    - Schema Path: #/anyOf/0/properties/postalCode
+// ❌ Validation Failed: Value or type does not match NG
+//    - Data Path: /country
+//    - Schema Path: #/anyOf/1/properties/country
+// ❌ Validation Failed: Value or type does not match 112
+//    - Data Path: /postalCode
+//    - Schema Path: #/anyOf/1/properties/postalCode
+// ❌ Validation Failed: Value or type does not match UK
+//    - Data Path: /country
+//    - Schema Path: #/anyOf/2/properties/country
+// ❌ Validation Failed: Value or type does not match 113
+//    - Data Path: /postalCode
+//    - Schema Path: #/anyOf/2/properties/postalCode
+```
+
+#### `getFieldErrors(errors)`
+
+Groups errors by field path:
+
+typescript
+
+```typescript
+const result = validate({ country: "hi", postalCode: "yh" });
+const fieldErrors = jetValidator.getFieldErrors(validate.errors);
+
+console.log(fieldErrors);
+// {
+//   'country': [
+//     'Value or type does not match US',
+//     'Value or type does not match NG',
+//     'Value or type does not match UK'
+//   ],
+//   'postalCode': [
+//     'Value or type does not match 111',
+//     'Value or type does not match 112',
+//     'Value or type does not match 113'
+//   ]
+// }
+```
+
+This is particularly useful for displaying errors in forms:
+
+typescript
+
+```typescript
+const fieldErrors = jetValidator.getFieldErrors(validate.errors);
+
+Object.entries(fieldErrors).forEach(([field, messages]) => {
+  const inputElement = document.querySelector(`[name="${field}"]`);
+  displayErrors(inputElement, messages);
+});
+```
+
+#### `errorsText(errors, separator?)`
+
+Formats errors as a human-readable string:
+
+typescript
+
+```typescript
+const result = validate({ country: "hi", postalCode: "yh" });
+
+// Default separator (", ")
+console.log(jetValidator.errorsText(validate.errors));
+// data.country: Value or type does not match US, data.postalCode: Value or type does not match 111, data.country: Value or type does not match NG, data.postalCode: Value or type does not match 112, data.country: Value or type does not match UK, data.postalCode: Value or type does not match 113
+
+// Custom separator
+console.log(
+  jetValidator.errorsText(validate.errors, {
+    separator: "\n",
+  }),
+);
+// data.country: Value or type does not match US
+// data.postalCode: Value or type does not match 111
+// data.country: Value or type does not match NG
+// data.postalCode: Value or type does not match 112
+// data.country: Value or type does not match UK
+// data.postalCode: Value or type does not match 113
+
+// With data var.
+console.log(
+  jetValidator.errorsText(validate.errors, {
+    separator: "\n",
+    dataVar: "my",
+  }),
+);
+// my.country: Value or type does not match US
+// my.postalCode: Value or type does not match 111
+// my.country: Value or type does not match NG
+// my.postalCode: Value or type does not match 112
+// my.country: Value or type does not match UK
+// my.postalCode: Value or type does not match 113
+```
+
+#### `getFieldFromPath(dataPath)`
+
+Extracts the field name from a data path:
+
+typescript
+
+```typescript
+jetValidator.getFieldFromPath("/user/profile/email");
+// "email"
+
+jetValidator.getFieldFromPath("/items/0/name");
+// "name"
+
+jetValidator.getFieldFromPath("/");
+// ""
+```
+
+#### `getFullFieldPath(dataPath)`
+
+Converts JSON pointer path to dot notation:
+
+typescript
+
+```typescript
+jetValidator.getFullFieldPath("/user/profile/email");
+// "user.profile.email"
+
+jetValidator.getFullFieldPath("/items/0/name");
+// "items.0.name"
+
+jetValidator.getFullFieldPath("/");
+// ""
+```

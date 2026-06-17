@@ -1,0 +1,836 @@
+---
+title: "Code Generation"
+description: "Standalone function generation, inlining strategies, and serialization patterns."
+---
+
+# Code Generation and Standalone Functions
+
+## Overview
+
+Jet-Validator was designed as a simple JSON Schema validator with performance in mind. String concatenation was chosen as the primary code generation strategy to minimize dependencies and maximize control over the output. However, this approach became complex due to schema resolution requirements,specifically handling `$ref`, `$dynamicRef`, and `$anchor` keywords, which necessitated sophisticated tracking across references.
+
+Despite these challenges, we maintained the string concatenation approach as it provides unparalleled flexibility and control over the generated validation code.
+
+## Standalone by Default
+
+**All Jet-Validator generated functions are standalone by default.** This means the generated validation functions can execute independently without requiring the Jet-Validator library at runtime. However, certain features require runtime dependencies that are injected via the Function constructor.
+
+## The Challenge: Serialization Limitations
+
+The primary challenge with standalone code generation involves **formats** and **custom keywords**:
+
+### Formats
+When using custom formats, formats could be functions that import other functions, creating dependency chains that cannot be easily serialize, hence require users to import external dependencies manually, this must be handled by the user.
+
+### Custom Keywords
+Custom keywords come in three flavors—`code`, `validate`, and `compile`—each with different serialization characteristics and requirements.
+
+## How It Works: Normal Compilation
+
+During normal (non-standalone) compilation, Jet-Validator uses the Function constructor to inject runtime dependencies:
+
+```typescript
+return new Function(
+  "formatValidators",
+  "customKeywords",
+  generatedCodeString
+)(formatValidatorsObject, customKeywordsObject);
+```
+
+### Format Validators Object Construction
+
+During schema resolution, we collect all formats used in the schema and build a `formatValidators` object:
+
+```typescript
+const formatValidators = {};
+
+if (typeof resolvedSchema !== "boolean") {
+  if (allFormats.size > 0) {
+    for (const validatorKey of allFormats) {
+      const validator = this.formatValidators[validatorKey];
+      if (validator) {
+        if (typeof validator === "function" || validator instanceof RegExp) {
+          formatValidators[validatorKey] = validator;
+        } else {
+          formatValidators[validatorKey] = validator.validate;
+        }
+      }
+    }
+  }
+}
+```
+
+This process applies to **both built-in and custom formats**, ensuring all format validators are available to the generated function at runtime.
+
+## Standalone Generation
+
+To generate truly standalone code, use the `generateStandalone()` method:
+
+**Signature:**
+```typescript
+generateStandalone(
+    schema: SchemaDefinition,
+    sconfig?: ValidatorOptions,
+  ): {
+    code: string;
+    functionName: string;
+    formatSetup?: string;
+    imports: string[];
+  }
+```
+
+```typescript
+const result = jetValidator.generateStandalone(schema, config);
+
+console.log(result.code);         // The complete validation function
+console.log(result.functionName); // generated function name
+console.log(result.formatSetup);  // Setup code for formats requiring imports
+console.log(result.imports);      // Array of format names needing external imports
+```
+
+### Important: Use a Dedicated Instance
+
+**Best Practice:** Create a new Jet-Validator instance specifically for standalone generation, as it requires special configuration options:
+
+```typescript
+const standaloneValidator = new JetValidator({
+  formats: ["email", "uri", "date"],  // For $data support
+  overwrittenFormats: ["date"],       // Inbuilt formats you've customized
+  formatMode: "full",                 // or "fast"
+  // ... other options
+});
+
+const result = standaloneValidator.generateStandalone(schema);
+```
+
+### Configuration Options
+
+#### `formats: string[]`
+An array specifying which formats should be available when `$data` is present in the schema. This prevents inlining all formats unnecessarily.
+
+```typescript
+{
+  formats: ["email", "uri", "date", "ipv4"]
+}
+```
+
+#### `overwrittenFormats: string[]`
+Lists built-in formats you've overridden with custom implementations. Jet-Validator won't attempt to resolve dependencies for these formats.
+
+```typescript
+{
+  overwrittenFormats: ["date"]  // You provided a custom date validator
+}
+```
+
+#### `formatMode: "fast" | "full"`
+Determines which format validator set to use:
+- **"fast"**: Primarily regex-based validators (faster, less strict)
+- **"full"**: Function-based validators with comprehensive validation (slower, more accurate)
+
+
+## Custom Keywords: Inlining Strategies
+
+### 1. The `code` Keyword
+
+The `code` keyword provides the most straightforward inlining—**complete and direct**:
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "isEven",
+  type: "number",
+  code: (schema, _, context) => {
+    return `if (${schema.dataVar} % 2 !== 0) {
+      ${context.buildError({
+          message: '"Number must be even"',
+        })}
+      return false;
+    }`;
+  }
+});
+```
+
+The generated code from `code` is directly injected into the validation function with **no transformation**. This is pre-function code that executes inline.
+
+### 2. The `validate` Keyword
+
+The `validate` keyword is **fully inlinable** since it's a direct function (not a factory):
+The limitations here are few since its a keyword that needs validation context and not compilation context.
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "uniqueInParent",
+  schemaType: "boolean",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    if (!schemaValue) return true;
+    
+    const { parentData } = dataContext;
+    if (!Array.isArray(parentData)) return true;
+    
+    const occurrences = parentData.filter(item => item === data).length;
+    if (occurrences > 1) {
+      return { message: `Value '${data}' must be unique in array` };
+    }
+    return true;
+  }
+});
+```
+
+**Generated standalone code:**
+```typescript
+const uniqueInParent = (schemaValue, data, parentSchema, dataContext) => {
+  if (!schemaValue) return true;
+  
+  const { parentData } = dataContext;
+  if (!Array.isArray(parentData)) return true;
+  
+  const occurrences = parentData.filter(item => item === data).length;
+  if (occurrences > 1) {
+    return { message: `Value '${data}' must be unique in array` };
+  }
+  return true;
+};
+```
+
+The function is serialized using `toString()` and included directly in the generated code.
+
+**Important caveat:** Any external dependencies must be provided as imports. The function must be self-contained or rely only on built-in JavaScript features.
+
+### 3. The `compile` Keyword: The `...args` Pattern
+
+The `compile` keyword is a **factory function**—it returns another function. Only the **returned function** is inlined, not the factory itself. This creates a challenge: how do we provide compilation context to a function that runs at validation time?
+
+**Solution: The `...args` Pattern**
+
+By using rest parameters (`...args`), we capture the compilation context in a closure that gets serialized with the function:
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "maxScore",
+  type: "number",
+  schemaType: "number",
+  compile: (...args) => {
+    // args[0] = schemaValue
+    // args[1] = parentSchema  
+    // args[2] = context (includes schemaPath, rootSchema, opts)
+    
+    return (data, rootData, dataPath) => {
+      const maxValue = args[0];  // Captured in returned function
+      if (data > maxValue) {
+        return { message: `Score must not exceed ${maxValue}` };
+      }
+      return true;
+    };
+  }
+});
+```
+
+**What gets inlined:**
+
+```typescript
+const maxScore_123 = (...args) => (data, rootData, dataPath) => {
+    const maxValue = args[0];
+    if (data > maxValue) {
+      return { message: `Score must not exceed ${maxValue}` };
+    }
+    return true;
+  };
+
+// Later in validation code:
+const maxScore_123Result = maxScore_123(
+  100,  // schemaValue
+  { type: "number", maxScore: 100 },  // parentSchema
+  {
+    schemaPath: "#/properties/score",
+    rootSchema: {...},
+    opts: {...}
+  }
+)(data, rootData, "/score");
+```
+
+The standalone generator also inlines the context values:
+
+```typescript
+const compilerOptions = {...};
+const mainRootSchema = {...};
+```
+
+These constants are available to all compiled keyword functions.
+
+#### ✅ What Works (Self-Contained)
+
+```typescript
+compile: (...args) => {
+  return (data) => data > args[0];// ✅ Captured in closure
+}
+```
+
+#### ❌ What Fails (Not Self-Contained)
+
+```typescript
+compile: (...args) => {
+  const threshold = args[0];  // ❌ Not Captured in closure
+  
+  return (data) => data > threshold;
+}
+```
+
+#### ❌ What Fails (External Dependencies)
+
+```typescript
+import { checkLimit } from './utils';  // ❌ External dependency
+
+compile: (...args) => {
+  return (data) => checkLimit(data, args[0]);  // ❌ Will fail at runtime
+}
+```
+
+**Solution:** Provide external dependencies as imports in your standalone deployment.
+
+#### ❌ What Fails (Compilation-Only Context)
+
+```typescript
+compile: (condition, parentSchema, context) => {
+  const { field, value } = condition;  // ❌ Not accessible via ...args
+  
+  return (data, rootData) => {
+    if (rootData[field] === value) {  // ❌ 'field' doesn't exist at runtime
+      // ...
+    }
+  };
+}
+```
+
+This fails because `field` and `value` are from the factory function's parameters, not captured via `...args`.
+
+## Macro Keywords
+
+Macro keywords are special—they **transform the schema during resolution**, before code generation begins. The transformed schema is what gets compiled.
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "range",
+  macro: (schemaValue, parentSchema, context) => {
+    return {
+      minimum: schemaValue.min,
+      maximum: schemaValue.max
+    };
+  }
+});
+
+// Schema with macro:
+{
+  type: "number",
+  range: { min: 0, max: 100 }
+}
+
+// Transformed to:
+{
+  type: "number",
+  minimum: 0,
+  maximum: 100
+}
+```
+
+**Key point:** Macros don't generate any special code. They transform schemas into standard JSON Schema keywords, which are then compiled normally. The generated code contains validation for `minimum` and `maximum`, not `range`.
+
+This means **macros are always inlineable**—there's nothing special to inline because they produce standard schema structures.
+
+## Format Handling in Standalone Mode
+
+### Scenario 1: No $data, Specific Formats Used
+
+When your schema doesn't use `$data` and references specific formats:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email" },
+    age: { type: "number" }
+  }
+};
+```
+
+**Behavior:** Only the `email` format validator is inlined. No format object is created.
+
+**Generated code:**
+```typescript
+const format_email = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+@...$/i;
+
+// Format used directly in validation:
+if (!format_email.test(data.email)) {
+  validate.errors = [{...}]
+  return false;
+}
+```
+
+### Scenario 2: $data Present, No `formats` Array
+
+When `$data` is present but no `formats` array is specified:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    formatType: { type: "string" },
+    value: { 
+      type: "string",
+      format: { $data: "1/formatType" }
+    }
+  }
+};
+
+const config = {
+  formatMode: "full",
+  $data: true
+  // No formats array specified
+};
+```
+
+**Behavior:** **ALL** formats from the specified mode (`full` or `fast`) and custom are inlined, and a format object is created.
+
+**Generated code:**
+```typescript
+// All formats from FULL_FORMAT_VALIDATORS
+const format_email = /^[a-zA-Z0-9...$/i;
+const format_uri = /^[a-z][a-z0-9+\-.]*:...$/i;
+const format_date = function date(str) {...};
+// ... all other formats
+
+// Format object for dynamic access
+const formatValidators = {
+  "email": format_email,
+  "uri": format_uri,
+  "date": format_date,
+  // ... all formats
+};
+
+// Usage in validation:
+const formatType = rootData.formatType;
+const formatValidator = formatValidators[formatType];
+if (formatValidator && typeof var2 === "string") {
+    const isValid =
+        typeof formatValidator === "function"
+        ? formatValidator(var2)
+        : formatValidator.test(var2);
+    if (!isValid) {
+      validate.errors = [{...}];
+      return false;
+    }
+}
+```
+
+### Scenario 3: $data Present, With `formats` Array
+
+When `$data` is present and you specify a `formats` array:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    formatType: { type: "string" },
+    value: { 
+      type: "string",
+      format: { $data: "1/formatType" }
+    }
+  }
+};
+
+const config = {
+  formats: ["email", "uri", "date"],
+  $data: true
+};
+```
+
+**Behavior:** Only the formats specified in the array are inlined, and the format object contains only those formats.
+
+**Generated code:**
+```typescript
+// Only specified formats
+const format_email = /^[a-zA-Z0-9...$/i;
+const format_uri = /^[a-z][a-z0-9+\-.]*:...$/i;
+const format_date = function date(str) {...};
+
+// Format object with only specified formats
+const formatValidators = {
+  "email": format_email,
+  "uri": format_uri,
+  "date": format_date
+};
+```
+
+**Why this matters:** The `formats` array prevents unnecessary code bloat when using `$data`. Instead of inlining all 30+ format validators, you only inline the ones your application actually needs.
+
+**The format array is only for when the schema uses \$data if otherwise  ignore it.**
+
+**Always add the format array when $data keyword is used, except you explicitly want all formats included.**
+
+### Format Dependencies
+
+Some formats depend on other formats. Jet-Validator automatically handles these dependencies:
+
+```typescript
+// Schema uses date-time
+{
+  type: "string",
+  format: "date-time"
+}
+```
+
+**Generated code:**
+```typescript
+// Dependencies inlined first (only once, even if used multiple times)
+function format_date(str) {
+  const matches = DATE_REGEX.exec(str);
+  // ...
+}
+
+function format_time(strictTimeZone) {
+  return function time(str) {
+    // ...
+  };
+}
+
+
+// Main format using dependencies
+function format_date_time(str) {
+  const dateTime = str.split(DATE_TIME_SEPARATOR);
+  return dateTime.length === 2 && 
+         format_date(dateTime[0]) && 
+         format_time(dateTime[1]);
+};
+```
+
+**Tracked dependencies:**
+- `date-time` depends on: `date`, `getTime`, `time`
+- `iso-date-time` depends on: `date`, `iso-time`
+- `time` depends on: `getTime`
+
+The standalone generator tracks which formats have been inlined to prevent duplicates.
+
+### Overwritten Formats
+
+If you've overridden a built-in format with your own implementation:
+
+```typescript
+const validator = new JetValidator({
+  overwrittenFormats: ["date"]
+});
+
+validator.addFormat("date", (str) => {
+  // Custom DD/MM/YYYY validation
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(str);
+});
+```
+
+**Behavior:** Jet-Validator will inline your custom format **without attempting to resolve dependencies**, since it's no longer the built-in version.
+
+## Variable Naming: Handling Special Characters
+
+Format names often contain hyphens and other special characters that are invalid in JavaScript variable names:
+
+```
+"json-pointer-uri-fragment"  // ❌ Invalid variable name
+```
+
+**Solution:** All non-alphanumeric characters are replaced with underscores:
+
+```typescript
+function getSafeFormatName(formatName: string): string {
+  return "format_" + formatName.replace(/[^a-zA-Z0-9]/g, "_");
+}
+```
+
+**Result:**
+```
+format_json_pointer_uri_fragment  // ✅ Valid variable name
+```
+
+This applies to:
+- Format variable declarations
+- Format object property values
+- All format references in generated code
+
+## Complete Examples
+
+### Example 1: Simple Standalone (No $data)
+
+```typescript
+const validator = new JetValidator({
+  formatMode: "full"
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email" },
+    age: { type: "number", minimum: 0 }
+  }
+};
+
+const result = validator.generateStandalone(schema, {});
+```
+
+**Generated code:**
+```javascript
+// Format validators
+const format_email = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+@...$/i;
+
+function validate(rootData) {
+  const var0 = rootData;
+  if (typeof var0 !== "object" || Array.isArray(var0) || var0 === null) {
+    validate.errors = [
+      {
+        dataPath: "/",
+        schemaPath: "#",
+        keyword: "type",
+        expected: "object",
+        message: "Invalid type."
+      }
+    ]
+    return false;
+  }
+  
+  if (var0["email"] !== undefined) {
+    const var1 = var0["email"];
+    if (typeof var1 !== "string") {
+      validate.errors = [{...}];
+      return false;
+    }
+    if (!format_email.test(var1)) {
+      validate.errors = [{...}];
+      return false;
+    }
+  }
+  
+  if (var0["age"] !== undefined) {
+    const var2 = var0["age"];
+    if (typeof var2 !== "number") {
+      validate.errors = [{...}];
+      return false;
+    }
+    if (var2 < 0) {
+      validate.errors = [{...}];
+      return false;
+    }
+  }
+  
+  return true;
+}
+```
+
+### Example 2: With $data and Specific Formats
+
+```typescript
+const validator = new JetValidator({
+  formats: ["email", "uri", "ipv4"],
+  $data: true
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    formatType: { type: "string" },
+    value: {
+      type: "string",
+      format: { $data: "1/formatType" }
+    }
+  }
+};
+
+const result = validator.generateStandalone(schema, {});
+```
+
+**Generated code:**
+```javascript
+
+// Format validators (all configured for $data support)
+const format_email = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+@...$/i;
+const format_uri = /^[a-z][a-z0-9+\-.]*:...$/i;
+const format_ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}...$/;
+
+// Format object for $data access
+const formatValidators = {
+  "email": format_email,
+  "uri": format_uri,
+  "ipv4": format_ipv4
+};
+
+function validate(rootData) {
+  const var0 = rootData;
+  if (typeof var0 !== "object" || Array.isArray(var0) || var0 === null) {
+    validate.errors = [{...}];
+    return false;
+  }
+  
+  if (var0["value"] !== undefined) {
+    const var1 = var0["value"];
+    if (typeof var1 !== "string") {
+      validate.errors = [{...}];
+      return false;
+    }
+    
+    const $data1 = rootData["formatType"];
+    if (typeof $data1 === "string") {
+      const formatValidator = formatValidators[$data1];
+      if (formatValidator && typeof var2 === "string") {
+        const isValid =
+          typeof formatValidator === "function"
+            ? formatValidator(var2)
+            : formatValidator.test(var2);
+        if (!isValid) {
+          validate.errors = [{...}];
+          return false;
+        }
+      }
+    }
+  }
+  
+  return true;
+}
+```
+
+### Example 3: Custom Keywords with Compile
+
+```typescript
+const validator = new JetValidator({});
+
+validator.addKeyword({
+  keyword: "maxScore",
+  type: "number",
+  schemaType: "number",
+  compile: (...args) => {
+    return (data, rootData, dataPath) => {
+      const maxValue = args[0];
+      if (data > maxValue) {
+        return {
+          message: `Score must not exceed ${maxValue}`
+        };
+      }
+      return true;
+    };
+  }
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    score: { type: "number", maxScore: 100 }
+  }
+};
+
+const result = validator.generateStandalone(schema, {});
+```
+
+**Generated code:**
+```javascript
+
+const compilerOptions = {"formatMode":"full","$data":false,...};
+const mainRootSchema = {"type":"object","properties":{...}};
+
+function validate(rootData) {
+  const var0 = rootData;
+  if (typeof var0 !== "object" || Array.isArray(var0) || var0 === null) {
+    validate.errors = [{...}];
+    return false;
+  }
+  
+  if (var0["score"] !== undefined) {
+    const var1 = var0["score"];
+    if (typeof var1 !== "number") {
+      validate.errors = [{...}];
+      return false;
+    }
+    
+    const maxScore_1 = (...args) => (data, rootData, dataPath) => {
+        const maxValue = args[0];
+        if (data > maxValue) {
+          return {
+            message: `Score must not exceed ${maxValue}`
+          };
+        }
+        return true;
+      };
+    
+    
+    const maxScore_1Result = maxScore_1(
+      100,
+      { type: "number", maxScore: 100 },
+      {
+        schemaPath: "#/properties/score",
+        rootSchema: mainRootSchema,
+        opts: compilerOptions
+      }
+    )(var1, rootData, "/score");
+    
+    if (maxScore_1Result !== true && typeof maxScore_1Result === "object") {
+      validate.errors = [{
+          dataPath: "/score",
+          schemaPath: "#/properties/score",
+          keyword: "maxScore",
+          message: maxScore_1Result.message || "Failed validation for keyword 'maxScore'"
+        }];
+      return false;
+    }
+  }
+  
+  return true;
+}
+```
+
+### Handling External dependencies
+
+```typescript
+const validator = new JetValidator({
+  formats: ["email", "uri", "ipv4"],
+  $data: true
+});
+jetValidator.addFormat('email', {
+  schemaType: "boolean",
+  validate: (data: string) => {
+    const valid = checkEmail(data) // This dependency must be provided
+    if (!valid) {
+      return { message: `Value '${data}' must be unique in array` };
+    }
+    return true;
+  }
+});
+
+
+const schema = {
+  type: "object",
+  properties: {
+    formatType: { type: "string" },
+    value: {
+      type: "string",
+      format: { $data: "1/formatType" }
+    }
+  }
+};
+
+const result = validator.generateStandalone(schema, {});
+
+// Add dependencies
+const finalCode = "require('checkEmail') from './email' \n" +  result.code;
+// Or
+const finalCode = checkEmail.toString() + "\n" +  result.code;
+```
+Adding external depencies is s simple as that, just ensure the imports are correct or the inline function doesnt have any dependencies as well or just add them.
+
+Handling dependency is left to user, this is to ensure maximum flexibility on how the depencies are provided.
+
+
+## Summary: Best Practices
+JetValidator can generate 100% standalone validation functions, provided that external depencies are handled by the user.
+
+The functions generated by jet-validator are not pretty 😅, meaning they aren't formatted, so you can use a formatter in your respective code editor to format the generated code. i.e prettier in VsCode
+1. **Create a dedicated Jet-Validator instance** for standalone generation with appropriate configuration
+2. **Use the `formats` array** when using `$data` to limit inlined formats and reduce code size
+3. **Specify `overwrittenFormats`** if you've customized built-in formats to prevent incorrect dependency resolution
+4. **Use the `...args` pattern** in `compile` keywords to capture compilation context
+5. **Keep keyword functions self-contained** or document required external imports
+6. **Use `code` keywords** for the most direct and efficient inlining
+7. **Macros are always inline-friendly** since they transform schemas before compilation
+
+Jet-Validator's standalone generation provides a powerful way to deploy validators without runtime dependencies, while maintaining the flexibility to handle complex validation scenarios including custom keywords and dynamic format references with `$data`.

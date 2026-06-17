@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# jet-validator-doc
 
-## Getting Started
+The documentation site for [jet-validator](https://github.com/official-jetio/jet-validator) — a fast, spec-compliant JSON Schema validator for JavaScript and TypeScript.
 
-First, run the development server:
+🌐 **Live site:** [https://jet-validator-doc.vercel.app](https://jet-validator-doc.vercel.app)
 
-```bash
+---
+
+## Built With
+
+- [Next.js](https://nextjs.org) — React framework
+- [Nextra v4](https://nextra.site) — documentation theme
+- [Pagefind](https://pagefind.app) — static search
+- [MDX](https://mdxjs.com) — markdown + JSX
+
+## Running Locally
+
+````bash
+git clone https://github.com/official-jetio/jet-validator-doc.git
+cd jet-validator-doc
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+````
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project Structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+````
+content/              # All documentation pages (.mdx)
+  _meta.ts            # Sidebar configuration
+  index.mdx           # Landing page
+  getting-started.mdx
+  ...
+src/
+  app/                # Next.js app router
+  mdx-components.tsx  # Custom MDX components
+public/               # Static assets
+next.config.mjs       # Nextra + Next.js config
+````
 
-## Learn More
+To edit a page, find the matching `.mdx` file in `content/` and edit it directly. Changes hot-reload in dev.
 
-To learn more about Next.js, take a look at the following resources:
+## Contributing
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Found a typo, a confusing explanation, or a code example that doesn't work?
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Click the **"Edit this page on GitHub"** link at the bottom of any docs page
+2. Make the fix in GitHub's editor (or fork + PR for larger changes)
+3. Open a PR — small fixes are merged quickly
 
-## Deploy on Vercel
+For bigger changes (new pages, restructuring a section), please open an issue first to discuss.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Reporting Issues
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Typos / unclear docs:** [Open a docs issue](https://github.com/official-jetio/jet-validator-doc/issues)
+- **Bugs in the validator itself:** [Report on the main repo](https://github.com/official-jetio/validator/issues)
+
+## Deployment
+
+The site is deployed to [Vercel](https://vercel.com). The `main` branch auto-deploys to production. PRs get preview deployments automatically.
+
+## License
+
+Documentation content is MIT licensed. See [LICENSE](./LICENSE).
+
+---
+
+Built by [@venerablesuprem](https://twitter.com/venerablesuprem)

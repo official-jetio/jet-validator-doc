@@ -1,0 +1,1013 @@
+---
+title: "Custom Error Messages"
+description: "Define schema-level and parent-level custom error messages with full path control."
+---
+
+# Custom Error Messages
+
+Jet Validator has built-in support for custom error messages with no plugins required. It supports schema-level, sub-schema level, and parent-level error customization with a clear priority system.
+
+## `$ref` and $dynamicRef
+
+Errors in external referenced schemas should be in said schemas, the schema pointed to must have its own custom error message.
+The rule applies to local referenced schema as well.
+
+Also Jet-Validator gives the full schema path, when returning errors that occured in a referenced schema.
+**Example:**
+
+```typescript
+const error = {
+  schemaPath:
+    "#/$ref/https://json-schema.org/draft/2020-12/schema/allOf/0/$ref/https://json-schema.org/draft/2020-12/meta/core",
+};
+```
+
+This error was returned from the JSON Schema test suite metaschema. The path breaks down as follows:
+
+- `#/` — The root schema passed to the validator
+- `$ref/https://json-schema.org/draft/2020-12/schema/` — References an external schema
+- `allOf/0/` — The first sub-schema in the `allOf` keyword
+- `$ref/https://json-schema.org/draft/2020-12/meta/core` — Another external schema reference
+
+Jet-Validator provides the full execution path from start to finish, making it easier to trace exactly where validation failed — especially useful when debugging complex schemas with external references.
+
+## Error Message Priority
+
+When multiple `errorMessage` definitions exist, they resolve in this order:
+
+1. **Schema-level string** (highest) — `errorMessage: "failed"` at the validating schema
+2. **Schema-level object** — `errorMessage: { type: "failed", minLength: "too short" }`
+3. **Immediate parent sub-schema level** — error messages defined via the alt path for property-to-schema mappings
+4. **Root-level** (lowest) — error messages defined at the root/ancestor schema level
+
+The default message is only used if no error message is found throughout the entire schema.
+
+---
+
+## Schema-Level Error Messages
+
+### String Form
+
+Override all validation errors at a schema level with a single message:
+
+```typescript
+const schema = {
+  type: "string",
+  minLength: 5,
+  maxLength: 20,
+  pattern: "^[a-z]+$",
+  errorMessage: "Username must be 5-20 lowercase letters",
+};
+
+// ANY validation failure returns: "Username must be 5-20 lowercase letters"
+```
+
+### Object Form
+
+Customize error messages for specific validation keywords:
+
+```typescript
+const schema = {
+  type: "string",
+  minLength: 5,
+  maxLength: 20,
+  pattern: "^[a-z]+$",
+  errorMessage: {
+    type: "Must be text",
+    minLength: "Too short - need at least 5 characters",
+    maxLength: "Too long - maximum 20 characters",
+    pattern: "Only lowercase letters allowed",
+  },
+};
+```
+
+If a keyword fails and has no corresponding entry in the object, it falls back to the immediate parent sub-schema level, then root-level errors.
+
+---
+
+## Parent-Level Error Messages
+
+Define error messages at a parent schema for its sub-schemas. This is useful for centralized error management.
+
+### For Object Properties
+
+**String form** — applies to all errors within that property:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      format: "email",
+      minLength: 5,
+    },
+  },
+  errorMessage: {
+    properties: {
+      email: "Invalid email address",
+    },
+  },
+};
+
+// ANY email validation failure returns: "Invalid email address"
+```
+
+**Object form** — per-keyword customization:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      format: "email",
+      minLength: 5,
+    },
+  },
+  errorMessage: {
+    properties: {
+      email: {
+        type: "Email must be a string",
+        format: "Email format is invalid",
+        minLength: "Email too short",
+      },
+    },
+  },
+};
+```
+
+### For Array Items
+
+```typescript
+const schema = {
+  type: "array",
+  items: {
+    type: "number",
+    minimum: 0,
+    maximum: 100,
+  },
+  errorMessage: {
+    items: "Item validation failed",
+  },
+};
+
+// Or per-keyword:
+const schemaDetailed = {
+  type: "array",
+  items: {
+    type: "number",
+    minimum: 0,
+    maximum: 100,
+  },
+  errorMessage: {
+    items: {
+      type: "Must be a number",
+      minimum: "Cannot be negative",
+      maximum: "Cannot exceed 100",
+    },
+  },
+};
+```
+
+---
+
+## The Alt Path and Boundaries
+
+Certain keywords create **boundaries** that reset the error message resolution path. These keywords are:
+
+- `anyOf`
+- `allOf`
+- `oneOf`
+- `then`
+- `else`
+- `prefixItems`
+- `items` (for Draft-07 and earlier)
+
+Note: `if` does not create a boundary since it doesn't return errors.
+
+When a boundary is created, error messages defined outside that boundary **will not apply** to errors inside it (except for root-level error messages). Each boundary requires its own error message definitions.
+
+### How Boundaries Work
+
+```typescript
+const schema = {
+  anyOf: [
+    {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+      },
+      // Errors inside this anyOf branch need messages defined HERE
+      errorMessage: "Branch 1 failed",
+    },
+    {
+      type: "string",
+    },
+  ],
+};
+```
+
+The `errorMessage: "Branch 1 failed"` inside the first `anyOf` branch applies to all errors within that branch.
+
+### Root-Level Unified Errors for Branches
+
+At the root level, you can define a single error message that applies to all errors from any branch of `anyOf`, `allOf`, `oneOf`, `then`, `else`, etc. — regardless of which branch or keyword caused the error:
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: "Must be either a string (5+ chars) or number (100+)",
+  },
+};
+
+// ANY error from ANY branch uses this message (if no schema-level error exists)
+```
+
+This is useful when you want one unified error message for all failures, no matter which branch or keyword failed.
+
+### Nested Boundaries
+
+Each boundary-creating keyword resets the path. If you have nested boundaries, each level needs its own error definitions:
+
+```typescript
+const schema = {
+  anyOf: [
+    {
+      type: "object",
+      if: { properties: { type: { const: "business" } } },
+      then: {
+        required: ["companyName"],
+        // The `then` keyword creates its own boundary
+        // Errors here need messages defined inside `then`
+        errorMessage: "Business accounts require company name",
+      },
+      properties: {
+        name: { type: "string" },
+      },
+      errorMessage: {
+        // This applies to the anyOf branch, but NOT inside `then`
+        properties: {
+          name: "Name validation failed",
+        },
+      },
+    },
+    {
+      type: "string",
+    },
+  ],
+};
+```
+
+### Single Error for Entire Branches
+
+You can define a single unified error message for all failures within a branch, and this works regardless of nesting depth:
+
+```typescript
+const schema = {
+  anyOf: [
+    {
+      type: "object",
+      properties: {
+        name: { type: "object", properties: { first: { type: "string" } } },
+      },
+      errorMessage: "Invalid user object", // WORKS for ALL errors, including nested `first`
+    },
+    {
+      type: "string",
+      minLength: 10,
+      errorMessage: "Invalid string format",
+    },
+  ],
+};
+```
+
+A single unified string error at the branch level covers all errors within that branch, even deeply nested ones.
+
+---
+
+## Property-to-Schema Mappings
+
+Keywords that map keys/properties to sub-schemas require special attention:
+
+- `properties`
+- `patternProperties`
+- `dependentSchemas`
+- `dependencies` (when using schema form)
+- `dependentRequired`
+- `required`
+- `propertyNames`
+
+These keywords **stray from their current schema level** when evaluating their sub-schemas. This has important implications when using **object-form error messages** to target specific properties.
+
+### The Problem
+
+When a property-to-schema mapping keyword exists **inside another** property-to-schema mapping, the parent property's string error won't apply to the nested mapping's errors.
+
+```typescript
+// This WON'T work as expected:
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        // <-- nested property-to-schema mapping
+        name: { type: "string" },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      user: "User validation failed", // Won't apply to `name` errors
+    },
+  },
+};
+```
+
+The error message `"User validation failed"` only applies to top-level keyword failures in the `user` sub-schema (like `type: "object"`). It does **not** apply to errors from the nested `properties.name` because `properties` (a property-to-schema mapping) strays from its current level.
+
+This rule applies to **all** property-to-schema mapping keywords. If `dependentSchemas`, `dependentRequired`, `required`, `dependencies`, `patternProperties`, or any similar keyword is nested inside a `properties` (or another property-to-schema mapping), the same behavior applies:
+
+```typescript
+// This also WON'T work:
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      dependentSchemas: {
+        // <-- nested property-to-schema mapping
+        role: { required: ["permissions"] },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      user: "User validation failed", // Won't apply to dependentSchemas errors
+    },
+  },
+};
+```
+
+### The Solution: Tailored Paths
+
+You must follow the schema path in your error messages:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      user: {
+        type: "User must be an object",
+        properties: {
+          name: {
+            type: "Name must be a string",
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+### The `_jetError` Fallback
+
+Since a string error on a property won't apply to nested property-to-schema mappings, you'd normally have to explicitly define errors for every nested mapping. The `_jetError` keyword provides a fallback for all **non-property-to-schema** keywords at a given level, allowing you to use a general error while still explicitly defining the nested mappings:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      minProperties: 1,
+      properties: {
+        name: { type: "string", minLength: 2 },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      user: {
+        _jetError: "User validation failed", // Applies to type, minProperties, etc.
+        properties: {
+          name: "Invalid name", // Must be explicitly defined
+        },
+      },
+    },
+  },
+};
+```
+
+`_jetError` applies to keywords like `type`, `minProperties`, `minLength`, `pattern`, etc. — any keyword that doesn't stray from its current level i.e validation keywords. Explicit definitions always take priority over `_jetError`.
+
+**Note:** You only need `_jetError` when there are property-to-schema mapping keywords at that level that need their own error definitions. If there are no such keywords, you can use a simple string form:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      format: "email",
+      minLength: 5,
+      // No nested property-to-schema mappings here
+    },
+  },
+  errorMessage: {
+    properties: {
+      email: "Invalid email", // String form works fine
+    },
+  },
+};
+```
+
+---
+
+## Advanced Error Message Features
+
+### Logical Operators (anyOf/oneOf/allOf)
+
+**Single error for all branches:**
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: "Must be either a string (5+ chars) or number (100+)",
+  },
+};
+```
+
+**Per-branch errors (array form):**
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: [
+      "String must have at least 5 characters",
+      "Number must be at least 100",
+    ],
+  },
+};
+```
+
+**Per-branch errors (object form):**
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: {
+      0: "String must have at least 5 characters",
+      1: "Number must be at least 100",
+    },
+  },
+};
+```
+
+**Tailored per-keyword errors within branches:**
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5, maxLength: 20 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: [
+      {
+        type: "Must be a string",
+        minLength: "String too short",
+        maxLength: "String too long",
+      },
+      {
+        type: "Must be a number",
+        minimum: "Number too small",
+      },
+    ],
+  },
+};
+```
+
+### Conditional Logic (if/then/else)
+
+**Sub-schema level errors:**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    country: { type: "string" },
+    postalCode: { type: "string" },
+  },
+  if: {
+    properties: { country: { const: "US" } },
+  },
+  then: {
+    properties: {
+      postalCode: { pattern: "^[0-9]{5}$" },
+    },
+    errorMessage: "US postal code must be 5 digits", // Inside the boundary
+  },
+  else: {
+    properties: {
+      postalCode: { type: "string" },
+    },
+    errorMessage: "Postal code required",
+  },
+};
+```
+
+**Root-level errors for then/else:**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    country: { type: "string" },
+    postalCode: { type: "string" },
+  },
+  if: {
+    properties: { country: { const: "US" } },
+  },
+  then: {
+    properties: {
+      postalCode: { pattern: "^[0-9]{5}$" },
+    },
+  },
+  errorMessage: {
+    then: "US postal code validation failed",
+    else: "Non-US postal code validation failed",
+  },
+};
+```
+
+**Tailored errors with path:**
+
+```typescript
+const schema = {
+  if: {
+    properties: { country: { const: "US" } },
+  },
+  then: {
+    properties: {
+      postalCode: { pattern: "^[0-9]{5}$" },
+    },
+    errorMessage: {
+      properties: {
+        postalCode: { pattern: "Invalid ZIP code format" },
+      },
+    },
+  },
+};
+
+// Or at root level:
+const schemaAlt = {
+  if: {
+    properties: { country: { const: "US" } },
+  },
+  then: {
+    properties: {
+      postalCode: { pattern: "^[0-9]{5}$" },
+    },
+  },
+  errorMessage: {
+    then: {
+      properties: {
+        postalCode: "Invalid ZIP code format",
+      },
+    },
+  },
+};
+```
+
+### Array prefixItems
+
+**Single error for all items:**
+
+```typescript
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: "Invalid tuple structure",
+  },
+};
+```
+
+**Per-index errors (array form):**
+
+```typescript
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: [
+      "First item must be a string",
+      "Second item must be a number",
+    ],
+  },
+};
+```
+
+**Per-index errors (object form):**
+
+```typescript
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: {
+      0: "First item must be a string",
+      1: "Second item must be a number",
+    },
+  },
+};
+```
+
+You can also do:
+
+```typescript
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: {
+      0: { type: "First item must be a string" },
+      1: { type: "Second item must be a number" },
+    },
+  },
+};
+```
+
+**Note:** `prefixItems` creates a boundary, so complex sub-schemas within each index need their errors defined inside that index's error message.
+
+### Dependent Required
+
+Per-dependency customization:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    creditCard: { type: "string" },
+    cvv: { type: "string" },
+    billingAddress: { type: "string" },
+  },
+  dependentRequired: {
+    creditCard: ["cvv", "billingAddress"],
+  },
+  errorMessage: {
+    dependentRequired: {
+      creditCard: "CVV and billing address required for credit card payments",
+    },
+  },
+};
+```
+
+### Dependent Schemas
+
+Since `dependentSchemas` is a property-to-schema mapping, its sub-schemas may contain boundary-creating keywords. You need to define errors appropriately:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    paymentMethod: { type: "string" },
+    cardNumber: { type: "string", minLength: 16 },
+  },
+  dependentSchemas: {
+    paymentMethod: {
+      required: ["cardNumber"],
+    },
+  },
+  errorMessage: {
+    dependentSchemas: {
+      paymentMethod: {
+        required: {
+          cardNumber: "Card number required when payment method is specified", // Remember the rule for property to schema mapping inside another?
+        },
+      },
+    },
+  },
+};
+```
+
+If the sub-schema contains `if/then/else`, remember that `then` and `else` create their own boundaries:
+
+```typescript
+const schema = {
+  type: "object",
+  dependentSchemas: {
+    type: {
+      if: { properties: { type: { const: "business" } } },
+      then: {
+        required: ["companyName"],
+        errorMessage: "Business accounts must have company name", // Inside then boundary
+      },
+    },
+  },
+};
+```
+
+### The `not` Keyword
+
+The `not` keyword is special: no errors are collected inside its sub-schema since its purpose is to fail. You can only define an error message for the `not` keyword itself at the parent level:
+
+```typescript
+const schema = {
+  type: "string",
+  not: { pattern: "^admin" },
+  errorMessage: {
+    not: "Username cannot start with 'admin'",
+  },
+};
+```
+
+### Single Keyword-to-Subschema Mappings
+
+Keywords like `unevaluatedItems`, `unevaluatedProperties`, `additionalProperties`, and `additionalItems` that map to a single sub-schema can have either string or detailed error messages:
+
+**String form:**
+
+```typescript
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }],
+  items: false,
+  errorMessage: {
+    items: "No additional items allowed",
+  },
+};
+```
+
+**Detailed form:**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+  additionalProperties: { type: "number" },
+  errorMessage: {
+    additionalProperties: {
+      type: "Additional properties must be numbers",
+    },
+  },
+};
+```
+
+### Dependencies (Legacy)
+
+```typescript
+const schema = {
+  type: "object",
+  dependencies: {
+    creditCard: ["cvv"],
+    email: {
+      type: "object",
+      required: ["emailVerified"],
+    },
+  },
+  errorMessage: {
+    dependencies: {
+      creditCard: "CVV required with credit card",
+      email: "Email verification status required",
+    },
+  },
+};
+```
+
+---
+
+## Complex Nesting Examples
+
+### Nested Properties with `_jetError`
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      minProperties: 1,
+      properties: {
+        profile: {
+          type: "object",
+          properties: {
+            name: { type: "string", minLength: 2 },
+            age: { type: "number", minimum: 0 },
+          },
+        },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      user: {
+        _jetError: "User object invalid",
+        properties: {
+          profile: {
+            _jetError: "Profile invalid",
+            properties: {
+              name: "Invalid name",
+              age: "Invalid age",
+            },
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+### prefixItems with Complex Sub-schemas
+
+```typescript
+const schema = {
+  prefixItems: [
+    {
+      type: "array",
+      items: {
+        type: "object",
+        minProperties: 2,
+        additionalProperties: { type: "number" },
+        dependentRequired: {
+          hi: ["mann"],
+        },
+      },
+      errorMessage: {
+        _jetError: "First item array invalid",
+        items: {
+          _jetError: "Array item invalid",
+          additionalProperties: "Additional property must be a number",
+          dependentRequired: { hi: "Missing 'mann' dependency" },
+        },
+      },
+    },
+    {
+      type: "string",
+    },
+  ],
+};
+
+// Or with detailed additionalProperties:
+const schemaDetailed = {
+  prefixItems: [
+    {
+      type: "array",
+      items: {
+        type: "object",
+        minProperties: 2,
+        additionalProperties: { type: "number" },
+        dependentRequired: {
+          hi: ["mann"],
+        },
+      },
+      errorMessage: {
+        _jetError: "First item array invalid",
+        items: {
+          _jetError: "Array item invalid",
+          additionalProperties: { type: "Must be a number" },
+          dependentRequired: { hi: "Missing 'mann' dependency" },
+        },
+      },
+    },
+    {
+      type: "string",
+    },
+  ],
+};
+```
+
+### anyOf with Nested Properties
+
+```typescript
+const schema = {
+  anyOf: [
+    {
+      type: "object",
+      properties: {
+        name: {
+          type: "object",
+          dependentSchemas: {
+            first: { type: "string" },
+          },
+        },
+      },
+      errorMessage: {
+        properties: {
+          name: {
+            _jetError: "Name object invalid",
+            dependentSchemas: {
+              first: "First name dependency failed",
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "string",
+      errorMessage: "Must be a valid string",
+    },
+  ],
+  errorMessage: {
+    anyOf: "Value must be a name object or string",
+  },
+};
+```
+
+---
+
+## Best Practices
+
+1. **Prefer schema-level errors** — Define `errorMessage` directly on the schema being validated when possible. This avoids deep nesting.
+
+2. **Use `_jetError` for fallbacks** — When property-to-schema mapping keywords exist, use `_jetError` as a catch-all at each level instead of defining every keyword's error.
+
+3. **Be mindful of boundaries** — Keywords like `anyOf`, `allOf`, `oneOf`, `then`, `else`, `prefixItems`, and `items` (Draft-07) create boundaries. Error messages outside a boundary won't apply inside it (except root-level).
+
+4. **Keep root-level errors for small schemas** — Deep nesting in `errorMessage` becomes hard to maintain. For complex schemas, prefer schema-level errors.
+
+5. **Remember property-to-schema mappings stray** — `properties`, `patternProperties`, `dependentSchemas`, `propertyNames`, etc. require explicit path-following in error messages.
+
+---
+
+## Error Format
+
+Validation errors follow this structure:
+
+```typescript
+interface ValidationError {
+  dataPath: string; // JSONPointer to data location (e.g., "/user/email")
+  schemaPath: string; // JSONPointer to schema location
+  keyword: string; // Validation keyword that failed
+  value: unknown; // The value that was validated
+  expected?: string; // Expected value/type
+  message: string; // Error message (custom or default)
+}
+```
+
+### Example Error Output
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      format: "email",
+      errorMessage: "Please enter a valid email address",
+    },
+  },
+  required: ["email"],
+};
+
+const validate = compile(schema);
+const result = validate({ email: "not-an-email" });
+
+console.log(result); // false
+console.log(validate.errors);
+// [{
+//   dataPath: '/email',
+//   schemaPath: '#/properties/email/format',
+//   keyword: 'format',
+//   value: 'not-an-email',
+//   expected: 'valid email',
+//   message: 'Please enter a valid email address'
+// }]
+```
+
+---
+
+## Conclusion
+
+The custom error message system is highly flexible and supports multiple approaches for defining errors. All validation keywords support custom error messages, and the same rules that apply to `properties` also apply to `patternProperties`, `propertyNames`, and similar property-to-schema mapping keywords.
+
+It is advisable to experiment with different patterns to find the approach that best suits your schema structure and error reporting needs.
