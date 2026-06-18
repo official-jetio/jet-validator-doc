@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 
 const banner = (
   <Banner storageKey="jet-validator-banner">
-    jet-validator docs are live 🎉
+    @jetio/validator docs are live 🎉
   </Banner>
 );
 const navbar = <Navbar logo={<b>@jetio/validator</b>} />;
