@@ -12,8 +12,8 @@ const outfit = Outfit({
 
 export const metadata: Metadata = {
   title: {
-    default: "jet-validator",
-    template: "%s | jet-validator",
+    default: "@jetio/validator",
+    template: "%s | @jetio/validator",
   },
   description: "The fastest JSON Schema validator in JavaScript",
 };
@@ -23,9 +23,9 @@ const banner = (
     jet-validator docs are live 🎉
   </Banner>
 );
-const navbar = <Navbar logo={<b>jet-validator</b>} />;
+const navbar = <Navbar logo={<b>@jetio/validator</b>} />;
 const footer = (
-  <Footer>MIT {new Date().getFullYear()} © jet-validator.</Footer>
+  <Footer>MIT {new Date().getFullYear()} © @jetio/validator.</Footer>
 );
 
 export default async function RootLayout({

@@ -1,8 +1,8 @@
 # jet-validator-doc
 
-The documentation site for [jet-validator](https://github.com/official-jetio/jet-validator) — a fast, spec-compliant JSON Schema validator for JavaScript and TypeScript.
+The documentation site for [@jetio/validator](https://github.com/official-jetio/validator) — a fast, spec-compliant JSON Schema validator for JavaScript and TypeScript.
 
-🌐 **Live site:** [https://jet-validator-doc.vercel.app](https://jet-validator-doc.vercel.app)
+🌐 **Live site:** [https://jet-validator-docs.vercel.app](https://jet-validator-docs.vercel.app)
 
 ---
 
