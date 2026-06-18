@@ -5,7 +5,7 @@ description: "The fastest JSON Schema validator in JavaScript(19x Faster than AJ
 
 import { Tabs } from "nextra/components";
 
-# jet-validator
+# @jetio/validator
 
 **The Fastest JSON Schema Validator in JavaScript(19x Faster than AJV)**
 
@@ -35,19 +35,19 @@ import { Tabs } from "nextra/components";
 
 ---
 
-## Why jet-validator?
+## Why @jetio/validator?
 
-**jet-validator** was built to be the fastest and most developer-friendly JSON Schema validator in JavaScript. While other validators sacrifice compilation speed or require external packages for basic features, jet-validator delivers blazing-fast compilation, complete format support, and enhanced schema capabilities—all in a smaller bundle with zero dependencies.
+**@jetio/validator** was built to be the fastest and most developer-friendly JSON Schema validator in JavaScript. While other validators sacrifice compilation speed or require external packages for basic features, @jetio/validator delivers blazing-fast compilation, complete format support, and enhanced schema capabilities—all in a smaller bundle with zero dependencies.
 
-Whether you're validating API requests, configuration files, or user input, jet-validator provides the performance and features you need without the bloat.
+Whether you're validating API requests, configuration files, or user input, @jetio/validator provides the performance and features you need without the bloat.
 
 ---
 
 ## Overview
 
-### What is jet-validator?
+### What is @jetio/validator?
 
-jet-validator is a **compile-time JSON Schema validator** that transforms schemas into highly optimized JavaScript validation functions. Unlike traditional validators that interpret schemas at runtime, jet-validator generates specialized code tailored to your exact schema structure.
+@jetio/validator is a **compile-time JSON Schema validator** that transforms schemas into highly optimized JavaScript validation functions. Unlike traditional validators that interpret schemas at runtime, @jetio/validator generates specialized code tailored to your exact schema structure.
 
 ### Why Compile-Time Validation?
 
@@ -61,7 +61,7 @@ function validate(schema, data) {
 }
 ```
 
-**jet-validator** (compile-time generation):
+**@jetio/validator** (compile-time generation):
 
 ```javascript
 // Schema → Optimized function (compiled once)
@@ -73,7 +73,7 @@ validate(data); // ⚡ No interpretation overhead
 
 ### Compilation Speed: Sub-Millisecond Performance
 
-jet-validator's compilation is **5-44x faster** than other validators, achieving **sub-millisecond compilation times** even for complex schemas. This changes what's possible:
+@jetio/validator's compilation is **19x faster** than other validators, achieving **sub-millisecond compilation times** even for complex schemas. This changes what's possible:
 
 **Compilation Benchmarks:**
 
@@ -97,7 +97,7 @@ const complexSchema = {
   },
 };
 
-// jet-validator: 1.2ms ⚡
+// @jetio/validator: 1.2ms ⚡
 // ajv: 40- 80ms
 // Other validators: 5-20ms
 ```
@@ -201,21 +201,9 @@ Converting a schema into an optimized validation function. Compiled validators c
 ## 📦 Installation
 
 <Tabs items={["npm", "yarn", "pnpm"]}>
-  <Tabs.Tab>
-    ```bash
-    npm install @jetio/validator
-    ```
-  </Tabs.Tab>
-  <Tabs.Tab>
-    ```bash
-    yarn add @jetio/validator
-    ```
-  </Tabs.Tab>
-  <Tabs.Tab>
-    ```bash
-    pnpm add @jetio/validator
-    ```
-  </Tabs.Tab>
+  <Tabs.Tab>```bash npm install @jetio/validator ```</Tabs.Tab>
+  <Tabs.Tab>```bash yarn add @jetio/validator ```</Tabs.Tab>
+  <Tabs.Tab>```bash pnpm add @jetio/validator ```</Tabs.Tab>
 </Tabs>
 
 ## 🚀 Quick Start

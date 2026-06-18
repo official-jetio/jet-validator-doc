@@ -23,10 +23,12 @@ References allow schemas to point to other schemas or schema fragments, enabling
 Jet-Validator handles path strictly when it comes to `$ref` and `$dynamicRef` in errors
 It returns the complete and full path to the referenced schema, all the way from the origin till the end.
 **Example:**
+
 ```typescript
 const error = {
-  schemaPath: "#/$ref/https://json-schema.org/draft/2020-12/schema/allOf/0/$ref/https://json-schema.org/draft/2020-12/meta/core"
-}
+  schemaPath:
+    "#/$ref/https://json-schema.org/draft/2020-12/schema/allOf/0/$ref/https://json-schema.org/draft/2020-12/meta/core",
+};
 ```
 
 This error was returned from the JSON Schema test suite metaschema. The path breaks down as follows:
@@ -99,12 +101,13 @@ validate({
 
 1. Compiler finds `$ref: "#/definitions/user"`
 2. Resolves to path `#/definitions/user`
-**Then:**
+   **Then:**
 3. Generates function name: `validate_definitions_user_abc123`
 4. Replaces `$ref` with function call: `*validate_definitions_user_abc123`
-**Or:**
-3. Compile the referenced schema
-4. Directly inline the generated code to avoid function calls
+   **Or:**
+5. Compile the referenced schema
+6. Directly inline the generated code to avoid function calls
+
 ---
 
 **Example 2: Deep path references**
@@ -332,12 +335,11 @@ validate({
 2. Inside order, finds `$ref: "#/definitions/customer"` → generates `validate_customer_func`
 3. Inside order, finds `$ref: "#/definitions/item"` → generates `validate_item_func`
 4. All functions compiled once, reused for validation
-***Or**
-1. Finds `$ref: "#/definitions/order"` → attempt to inline it.
-2. Inside order, finds `$ref: "#/definitions/customer"` → attempts to inline it inside `$ref: "#/definitions/order"`
-3. Inside order, finds `$ref: "#/definitions/item"` → attempts to inline it inside `$ref: "#/definitions/order"`
-4. If all nested $refs of "#/definitions/order" can be inlined then "#/definitions/order" it self can also be inlined, avoiding function call overhead
-
+   **\*Or**
+5. Finds `$ref: "#/definitions/order"` → attempt to inline it.
+6. Inside order, finds `$ref: "#/definitions/customer"` → attempts to inline it inside `$ref: "#/definitions/order"`
+7. Inside order, finds `$ref: "#/definitions/item"` → attempts to inline it inside `$ref: "#/definitions/order"`
+8. If all nested $refs of "#/definitions/order" can be inlined then "#/definitions/order" it self can also be inlined, avoiding function call overhead
 
 ---
 
@@ -1926,9 +1928,9 @@ const schema = {
 
 #### Trade-off Summary
 
-| Aspect                | Runtime Resolution              | Compile-Time Resolution (JetValidator)                                       |
+| Aspect                | Runtime Resolution              | Compile-Time Resolution (JetValidator)                                    |
 | --------------------- | ------------------------------- | ------------------------------------------------------------------------- |
-| **Performance**       | Slower (lookup overhead)        | Faster (direct function calls)/inlining                                            |
+| **Performance**       | Slower (lookup overhead)        | Faster (direct function calls)/inlining                                   |
 | **Spec Compliance**   | 100% (if implemented correctly) | 90% (fails edge cases, fails 8 out of 48 tests in json schema test suite) |
 | **Code Complexity**   | Higher (scope tracking)         | Lower (static analysis)                                                   |
 | **Real-World Impact** | Handles all patterns            | Handles common patterns                                                   |
@@ -1961,12 +1963,14 @@ Dynamic references follow the same base URI and anchor resolution rules as stati
 
 JetValidator's schema resolver transforms raw schemas into optimized validation code through a three-phase process: **collection**, **assignment/inlining**, and **resolution**.
 
-Due to our resolution process, jet-validator never has infinite recursion problems, unlike other validators which exceed the maximum stack depth with certain schemas. jet-validator's recursion only goes as deep as the data structure itself, so there is no **INFINITE RECURSION** problem in jet-validator.
+Due to our resolution process, @jetio/validator never has infinite recursion problems, unlike other validators which exceed the maximum stack depth with certain schemas. @jetio/validator's recursion only goes as deep as the data structure itself, so there is no **INFINITE RECURSION** problem in @jetio/validator.
+
 ### 🚫 No Stack Overflow Errors
 
 **JetValidator handles schemas that crash other validators.**
 
 While AJV encounters stack overflow errors on schemas with complex `$ref` patterns:
+
 ```
 RangeError: Maximum call stack size exceeded
 ```
@@ -1974,10 +1978,12 @@ RangeError: Maximum call stack size exceeded
 JetValidator processes them without issue. Our three-phase resolution eliminates circular reference problems **at compile time**, not runtime.
 
 **From official JSON Schema Test Suite (Draft 2020-12):**
+
 - AJV: 8 failures due to stack overflow on `ref.json` tests
 - JetValidator: 0 failures (all ref tests pass)
 
 **Why this matters:**
+
 - ✅ Your schemas won't unexpectedly crash in production
 - ✅ Complex schema compositions "just work"
 - ✅ No need to restructure schemas to avoid validator limitations
@@ -2024,9 +2030,9 @@ JetValidator processes them without issue. Our three-phase resolution eliminates
 │  • Collects all paths containing $ref or $dynamicRef        │
 │  • Checks path $ref points to for $ref, skip if it contains │
 │  • Inline the schema pointed to, if it contains no $refs     │
-│  • Repeat process until all inlineable $ref are inlined     |    
-|  • Any $ref that can't be inlined have circulr refrences    | 
-│  • Generate final compiled schema                           │           │  
+│  • Repeat process until all inlineable $ref are inlined     |
+|  • Any $ref that can't be inlined have circulr refrences    |
+│  • Generate final compiled schema                           │           │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -2139,7 +2145,7 @@ const refToFunctionName = new Map<string, string>();
 refToFunctionName.set("#/definitions/user", "validate_definitions_user_abc123");
 refToFunctionName.set(
   "https://api.example.com/address.json",
-  "validate_address_def456"
+  "validate_address_def456",
 );
 refToFunctionName.set("#userSchema", "validate_definitions_user_abc123"); // Same function!
 ```
@@ -2309,12 +2315,14 @@ const resolvedSchema = {
 ### Result: 10-27x Faster Compilation
 
 This architecture eliminates:
+
 - ❌ Recursive resolution overhead
-- ❌ Repeated schema traversals  
+- ❌ Repeated schema traversals
 - ❌ Runtime circular reference detection
 - ❌ Complex ref caching logic
 
 And enables:
+
 - ✅ Single-pass compilation
 - ✅ Constant-time ref lookups
 - ✅ Parallel external schema loading
@@ -2697,7 +2705,7 @@ const jetValidator = new JetValidator({
   loadSchema: async (uri) => {
     const result = await pool.query(
       "SELECT schema_json FROM json_schemas WHERE uri = $1",
-      [uri]
+      [uri],
     );
 
     if (result.rows.length === 0) {
@@ -2885,6 +2893,7 @@ const jetValidator = new JetValidator({
 ---
 
 **A simpler alternative is to add schema to registry using the addSchema method, that way schema is compiled synchrounously**
+
 ```typescript
 const addressSchema = {
   $id: "https://example.com/address",
@@ -2896,7 +2905,7 @@ const addressSchema = {
   },
   required: ["street", "city", "zipCode"],
 };
- 
+
 const personSchema = {
   type: "object",
   properties: {
@@ -2906,7 +2915,7 @@ const personSchema = {
   },
   required: ["name", "homeAddress"],
 };
- 
+
 // Register the referenced schema
 jetValidator.addSchema(addressSchema);
 

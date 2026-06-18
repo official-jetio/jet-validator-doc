@@ -1,13 +1,13 @@
 ---
 title: "Getting Started"
-description: "Install jet-validator, choose your schema language, and configure validation behavior."
+description: "Install @jetio/validator, choose your schema language, and configure validation behavior."
 ---
 
 # Getting Started
 
 ## 📚 Choosing Schema Language
 
-With **jet-validator**, you do not need to choose an explicit schema language. jet-validator supports JSON Schema Draft 06 through 2020-12 seamlessly.
+With **@jetio/validator**, you do not need to choose an explicit schema language. @jetio/validator supports JSON Schema Draft 06 through 2020-12 seamlessly.
 
 No additional configuration or setup is needed—it compiles any schema from any version from Draft 06 to 2020-12.
 
@@ -46,7 +46,7 @@ console.log(validate1({ name: "John", age: 30 })); // true
 console.log(validate2({ name: "Jane", age: 25 })); // true
 ```
 
-The compiler handles schemas from any accepted version flawlessly, removing the need for separate imports or separate jet-validator instances. The only extra configuration needed is for meta schemas (see [Meta Schema](/meta-schemas) section).
+The compiler handles schemas from any accepted version flawlessly, removing the need for separate imports or separate @jetio/validator instances. The only extra configuration needed is for meta schemas (see [Meta Schema](/meta-schemas) section).
 
 ---
 
@@ -62,7 +62,7 @@ const jetValidator = new JetValidator(options);
 
 ### Available Options
 
-jet-validator accepts a configuration object with the following options. All options are optional and have sensible defaults.
+@jetio/validator accepts a configuration object with the following options. All options are optional and have sensible defaults.
 
 ```typescript
 interface ValidatorOptions {
@@ -111,7 +111,7 @@ interface ValidatorOptions {
   validateFormats?: boolean;
   allowFormatOverride?: boolean;
   formatMode?: "full" | false | "fast";
-  formats?: string[]
+  formats?: string[];
   overwrittenFormats?: string[]; // STand alone code generation
 }
 ```
@@ -154,9 +154,8 @@ This is to reduce code bloat for stand alone code generation.
 ```typescript
 const jetValidator = new JetValidator({ loopEnum: 5 });
 const validate = jetValidator.compile({
-  enums: [] // if more than 5 it uses a for loop otherwise in line in if statement, e.g if(a !==n || a !== c)
+  enums: [], // if more than 5 it uses a for loop otherwise in line in if statement, e.g if(a !==n || a !== c)
 });
-
 ```
 
 Use this when you want to reduce the bloat of the generated functions.
@@ -164,7 +163,6 @@ Use this when you want to reduce the bloat of the generated functions.
 Exception applies when the $data keyword is used, enums are automatically looped.
 
 ---
-
 
 #### `loopRequired`
 
@@ -177,17 +175,15 @@ This is to reduce code bloat for stand alone code generation.
 ```typescript
 const jetValidator = new JetValidator({ loopRequired: 5 });
 const validate = jetValidator.compile({
-  required: [] // if more than 5 it uses a for loop otherwise in line in if statement, e.g if(a !==n || a !== c)
+  required: [], // if more than 5 it uses a for loop otherwise in line in if statement, e.g if(a !==n || a !== c)
 });
-
 ```
+
 Use this when you want to reduce the bloat of the generated functions.
 
 Exception applies when the $data keyword is used, required are automatically looped.
 
 ---
-
-
 
 #### `draft`
 
@@ -205,7 +201,7 @@ const jetValidator = new JetValidator({ draft: "draft7" });
 - **`draft2019-09` / `draft2020-12`**: All keywords in a schema level run alongside `$ref` and are not ignored.
 - **`draft7` / `draft6`**: When `$ref` is present in a schema, all other keywords at that level are ignored, and only `$ref` is evaluated.
 
-While jet-validator doesn't require you to choose an explicit schema language for most operations, this property is necessary due to the different handling of the `$ref` keyword across JSON Schema versions.
+While @jetio/validator doesn't require you to choose an explicit schema language for most operations, this property is necessary due to the different handling of the `$ref` keyword across JSON Schema versions.
 
 **When to use this property:**
 
@@ -214,7 +210,6 @@ While jet-validator doesn't require you to choose an explicit schema language fo
 - Skip this property entirely if your schemas are designed to only contain the `$ref` keyword at their schema level, with no sibling keywords.
 
 ---
-
 
 #### `inlineRefs`
 
@@ -232,6 +227,7 @@ const jetValidator = new JetValidator({ inlineRefs: true });
 It inlines references ($ref, $dynamicRef) whether external or internal. Traditional referenced schemas are compiled to separate functions and the referencing schema calls those functions for validation, but with inline the referenced schema is compiled directly with its pointer thereby inlining the code and avoiding function calls. This drastically improves performance.
 
 References can only be inlined under two conditions:
+
 1. The referenced schema either has no $ref or $dynamicRef, or the referenced schema has $ref or $dynamicRef but has been previously inlined (basically it has no refs or it has also been inlined).
 2. It is not a circular reference. Circular references are compiled to functions regardless, since they can't be inlined.
 
@@ -248,6 +244,7 @@ References can only be inlined under two conditions:
 **Default:** `false`
 
 This enables analytics and is particularly useful when refs are inlined.
+
 ```typescript
 const jetValidator = new JetValidator({ debug: true });
 ```
@@ -259,6 +256,7 @@ When enabled, the resolver logs a complete analytic of every reference it has ha
 **Real-time log information:**
 
 Each log entry shows:
+
 - **Schema ID**: The ID of the schema currently being resolved (or a randomly generated short string if the schema has no ID)
 - **Reference type**: Whether it's a `$ref` or `$dynamicRef`
 - **Reference path**: The JSON pointer path where the reference is located
@@ -267,6 +265,7 @@ Each log entry shows:
 - **Status**: Whether the reference was inlined or skipped (with reason)
 
 Sample output:
+
 ```
 [Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/maxProperties -> #/$defs/nonNegativeInteger
 [Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/minContains -> #/$defs/nonNegativeInteger
@@ -330,7 +329,7 @@ const validate = jetValidator.compile({
 });
 
 validate({ name: 123, age: "invalid" }); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // Returns only the first error:
 //   [{
 //     dataPath: '/name',
@@ -354,7 +353,7 @@ const validate = jetValidator.compile({
 });
 
 validate({ name: 123, age: "invalid" }); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // Returns all validation errors:
 
 //   [
@@ -373,7 +372,6 @@ console.log(validate.errors)
 //       message: 'Invalid type: expected number'
 //     }
 //   ]
-
 ```
 
 **Use `allErrors: true` when:**
@@ -403,16 +401,17 @@ const jetValidator = new JetValidator({ errorMessage: true });
 const validate = jetValidator.compile({
   type: "string",
 });
-validate(1)
-console, log(validate.errors); //[ { message: 'Invalid type.' } ]
+validate(1);
+(console, log(validate.errors)); //[ { message: 'Invalid type.' } ]
 
 const validate = jetValidator.compile({
   type: "string",
   errorMessage: "Received value must definitely be string",
 });
-validate(1)
+validate(1);
 console.log(validate.errors); //[ { message: 'Received value must definitely be string' } ]
 ```
+
 For complete documentation see For complete documentation on `$data` references, see the [$data References](/advanced-validation) section.
 
 ---
@@ -434,7 +433,7 @@ const validate = jetValidator.compile({
 });
 
 validate({ age: 15 }); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // Error includes the actual value and keyword value:
 
 //   [{
@@ -445,7 +444,6 @@ console.log(validate.errors)
 //     value: 15,  // ← Actual value included
 //     message: 'Value must be at least 18'
 //   }]
-
 ```
 
 ⚠️ **Warning:** Be cautious with `verbose: true` when validating sensitive data (passwords, tokens, etc.) as error logs will contain actual values.
@@ -476,7 +474,7 @@ const jetValidator = new JetValidator({ strict: true });
 const validate = jetValidator.compile({
   type: "object",
   properties: {
-    count: {  }, // Error (strictTypes)
+    count: {}, // Error (strictTypes)
   },
   required: ["hello"], // Error (strictRequired)
 });
@@ -529,11 +527,9 @@ When enabled, throws an error if required property is not defined in properties.
 const jetValidator = new JetValidator({ strictRequired: true });
 const validate = jetValidator.compile({
   type: "object",
-  properties: {
-  },
+  properties: {},
   required: ["name"], // Throws Error
 });
-
 ```
 
 **Without `strictRequired`:**
@@ -542,12 +538,11 @@ const validate = jetValidator.compile({
 const jetValidator = new JetValidator({ strictRequired: false });
 const validate = jetValidator.compile({
   type: "object",
-  properties: {
-  },
+  properties: {},
   required: ["name"],
 });
 
-validate({ name: '' }); // works fine
+validate({ name: "" }); // works fine
 ```
 
 This is useful when distinguishing between explicitly defined `properties` matters in your application.
@@ -567,20 +562,18 @@ const jetValidator = new JetValidator({ strictTypes: true });
 const validate = jetValidator.compile({
   type: "object",
   properties: {
-    age: { }, // Throws error, type: is required
+    age: {}, // Throws error, type: is required
   },
 });
-
 
 // Log mode - validates but logs warnings
 const jetValidator2 = new JetValidator({ strictTypes: "log" });
 const validate2 = jetValidator2.compile({
   type: "object",
   properties: {
-    age: {  }, //Logs error without disruptingapplication
+    age: {}, //Logs error without disruptingapplication
   },
 });
-
 ```
 
 ---
@@ -641,6 +634,7 @@ const jetValidator = new JetValidator({ strictSchema: false });
 ---
 
 ### Data Modification Options
+
 ---
 
 #### `coerceTypes`
@@ -728,7 +722,7 @@ const validate = jetValidator.compile({
   properties: {
     name: { type: "string" },
   },
-  additionalProperties: false // false is default
+  additionalProperties: false, // false is default
 });
 
 const data = {
@@ -751,7 +745,7 @@ const validate = jetValidator.compile({
   properties: {
     name: { type: "string" },
   },
-  additionalProperties: true
+  additionalProperties: true,
 });
 
 const data = { name: "Alice", age: 25 };
@@ -786,7 +780,8 @@ const validate = jetValidator.compile({
 const data = {};
 validate(data); // { status: 'active', role: 'user' }
 console.log(data);
-{}
+{
+}
 ```
 
 **With partial data:**
@@ -831,13 +826,12 @@ const validate = jetValidator.compile({
 const data = {};
 validate(data); //{}
 // Defaults are not applied
-
-
 ```
 
 ---
 
 ### Performance Options
+
 ---
 
 #### `cache`
@@ -895,10 +889,10 @@ const jetValidator = new JetValidator({ cache: false });
 - With caching: ~0.01ms for cached lookups
 - Without caching: &lt;1ms per compilation (higher depending on schema complexity)
 
-
 ---
 
 ### Metaschema & Schema
+
 ---
 
 For complete documentation on `metaschemas` references, see the [metaschema](/meta-schemas) section.
@@ -1000,17 +994,16 @@ _Note: This resolution function is only used for external references; local refe
 
 ```typescript
 const fetchSchema = (uri: string) => {
-   return db.fetch(uri)
-}
+  return db.fetch(uri);
+};
 const jetValidator = new JetValidator({ loadSchema: fetchSchema });
 
 const validate = jetValidator.compile({
-  type: 'object',
+  type: "object",
   properties: {
-    address: { $ref: 'http://example.com/address.json' },
-  }
+    address: { $ref: "http://example.com/address.json" },
+  },
 }); // address.json is fetched by the loadSchema function when schema is being resolved, fetched schema is not cached unless addUsedSchema is true.
-
 ```
 
 ---
@@ -1087,7 +1080,6 @@ This property is paticularly useful when using the `$data` keyword.
 Normal when resolving a schema the resolver walks through the schema collecting all formts before preparing them for validation.
 
 But when using the `$data` keyword format is only known at run tim so with `formats` you can specify an array of expected formats, that way only those are loaded for validation, otherwise all formats availble will be loaded.
-
 
 **Quick Example:**
 
@@ -1225,15 +1217,15 @@ For the following formats, the difference in speed between simple and complete p
 **Quick Example:**
 
 ```typescript
-const jetValidator = new JetValidator({ formats: 'full' });  // or false | 'fast'
+const jetValidator = new JetValidator({ formats: "full" }); // or false | 'fast'
 
 const validate = jetValidator.compile({
-  type: 'string',
-  format: 'email'  // uses full
+  type: "string",
+  format: "email", // uses full
 });
 
-validate("email@email.com");  // ✅ Valid
-validate("email");   // ❌ Invalid
+validate("email@email.com"); // ✅ Valid
+validate("email"); // ❌ Invalid
 ```
 
 #### `allowFormatOverride`
@@ -1290,7 +1282,7 @@ console.log(
     name: "Alice",
     age: 25,
     email: "alice@example.com",
-  })
+  }),
 );
 // true
 
@@ -1298,10 +1290,10 @@ console.log(
   validate({
     name: "A",
     age: 150,
-  })
+  }),
 ); // false
 
-console.log(validate.errors)
+console.log(validate.errors);
 
 //   [{
 //     dataPath: '/name',
@@ -1346,7 +1338,7 @@ console.log(
       city: "New York",
       zipCode: "10001",
     },
-  })
+  }),
 );
 // true
 
@@ -1356,9 +1348,9 @@ console.log(
     address: {
       street: "456 Oak Ave",
     },
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 
 //   [{
 //     dataPath: '/address',
@@ -1367,7 +1359,6 @@ console.log(validate.errors)
 //     expected: 'city',
 //     message: 'Required property missing: city'
 //   }]
-
 ```
 
 ---
@@ -1391,7 +1382,7 @@ console.log(validate(["apple", "banana", "orange"]));
 // true
 
 console.log(validate(["apple", "banana", "apple"])); // false
-console.log(validate.errors)
+console.log(validate.errors);
 //   [{
 //     dataPath: '/',
 //     schemaPath: '#/uniqueItems',
@@ -1400,7 +1391,7 @@ console.log(validate.errors)
 //   }]
 
 console.log(validate([])); //false
-console.log(validate.errors)
+console.log(validate.errors);
 
 //   [{
 //     dataPath: '/',
@@ -1437,7 +1428,7 @@ console.log(
   validate([
     { id: 1, name: "Alice", active: true },
     { id: 2, name: "Bob", active: false },
-  ])
+  ]),
 );
 // true
 
@@ -1445,9 +1436,9 @@ console.log(
   validate([
     { id: 1, name: "Alice" },
     { id: 2, name: "" },
-  ])
+  ]),
 ); //false
-console.log(validate.errors)
+console.log(validate.errors);
 //   [{
 //     dataPath: '/1/name',
 //     schemaPath: '#/items/properties/name/minLength',
@@ -1487,7 +1478,7 @@ console.log(
     status: "active",
     role: "admin",
     version: "1.0.0",
-  })
+  }),
 );
 // true
 
@@ -1495,9 +1486,9 @@ console.log(
   validate({
     status: "deleted",
     version: "1.0.0",
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 //  [{
 //     dataPath: '/status',
 //     schemaPath: '#/properties/status/enum',
@@ -1505,14 +1496,13 @@ console.log(validate.errors)
 //     message: 'Value must be one of: active, inactive, pending'
 //   }]
 
-
 console.log(
   validate({
     status: "active",
     version: "2.0.0",
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/version',
 //     schemaPath: '#/properties/version/const',
@@ -1520,7 +1510,6 @@ console.log(validate.errors)
 //     expected: '1.0.0',
 //     message: 'Value must be equal to 1.0.0'
 //   }]
-
 ```
 
 ---
@@ -1554,7 +1543,7 @@ console.log(
   validate({
     username: "john_doe",
     password: "SecurePass123",
-  })
+  }),
 );
 // true
 
@@ -1562,9 +1551,9 @@ console.log(
   validate({
     username: "ab",
     password: "weak",
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/username',
 //     schemaPath: '#/properties/username/minLength',
@@ -1573,15 +1562,14 @@ console.log(validate.errors)
 //     message: 'Length of value must be at least 3 characters'
 //   }]
 
-
 console.log(
   validate({
     username: "john-doe!",
     password: "SecurePass123",
-  })
+  }),
 ); // false
 
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/username',
 //     schemaPath: '#/properties/username/pattern',
@@ -1589,7 +1577,6 @@ console.log(validate.errors)
 //     expected: '^[a-zA-Z0-9_]+$',
 //     message: 'Value must match pattern: ^[a-zA-Z0-9_]+$'
 //   }]
-
 ```
 
 ---
@@ -1628,7 +1615,7 @@ console.log(
     age: 25,
     score: 85,
     price: 19.99,
-  })
+  }),
 );
 // true
 
@@ -1637,9 +1624,9 @@ console.log(
     age: 150,
     score: 85,
     price: 19.99,
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/age',
 //     schemaPath: '#/properties/age/maximum',
@@ -1648,15 +1635,14 @@ console.log(validate.errors)
 //     message: 'Value must be at most 120'
 //   }]
 
-
 console.log(
   validate({
     age: 25,
     score: 83,
     price: 19.99,
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/score',
 //     schemaPath: '#/properties/score/multipleOf',
@@ -1664,7 +1650,6 @@ console.log(validate.errors)
 //     expected: '5',
 //     message: 'Value must be a multiple of 5'
 //   }]
-
 ```
 
 ---
@@ -1690,7 +1675,7 @@ console.log(
   strictValidate({
     name: "Alice",
     age: 30,
-  })
+  }),
 );
 // true
 
@@ -1699,16 +1684,15 @@ console.log(
     name: "Alice",
     age: 30,
     email: "alice@example.com",
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/',
 //     schemaPath: '#/additionalProperties',
 //     keyword: 'additionalProperties',
 //     message: 'Additional properties not allowed: email'
 //   }]
-
 
 // Allow additional properties with type constraint
 const flexibleSchema = {
@@ -1726,7 +1710,7 @@ console.log(
     name: "Alice",
     email: "alice@example.com",
     phone: "555-1234",
-  })
+  }),
 );
 // true
 
@@ -1734,9 +1718,9 @@ console.log(
   flexibleValidate({
     name: "Alice",
     age: 30,
-  })
+  }),
 ); // false
-console.log(validate.errors)
+console.log(validate.errors);
 // [{
 //     dataPath: '/age',
 //     schemaPath: '#/additionalProperties/type',
@@ -1744,5 +1728,4 @@ console.log(validate.errors)
 //     expected: 'string',
 //     message: 'Invalid type: expected string'
 //   }]
-
 ```
