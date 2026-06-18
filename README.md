@@ -1,4 +1,4 @@
-# jet-validator-doc
+# @jetio/validator doc
 
 The documentation site for [@jetio/validator](https://github.com/official-jetio/validator) — a fast, spec-compliant JSON Schema validator for JavaScript and TypeScript.
 
