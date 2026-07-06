@@ -46,7 +46,7 @@ console.log(validate1({ name: "John", age: 30 })); // true
 console.log(validate2({ name: "Jane", age: 25 })); // true
 ```
 
-The compiler handles schemas from any accepted version flawlessly, removing the need for separate imports or separate @jetio/validator instances. The only extra configuration needed is for meta schemas (see [Meta Schema](/meta-schemas) section).
+The compiler handles schemas from any accepted version flawlessly, removing the need for separate imports or separate @jetio/validator instances. The only extra configuration needed is for meta schemas (see [Meta Schema](/meta-schemas/meta-schema-basics) section).
 
 ---
 
@@ -412,7 +412,7 @@ validate(1);
 console.log(validate.errors); //[ { message: 'Received value must definitely be string' } ]
 ```
 
-For complete documentation see For complete documentation on `$data` references, see the [$data References](/advanced-validation) section.
+For complete documentation see For complete documentation on `$data` references, see the [$data References](/advanced/data-keyword) section.
 
 ---
 
@@ -895,7 +895,7 @@ const jetValidator = new JetValidator({ cache: false });
 
 ---
 
-For complete documentation on `metaschemas` references, see the [metaschema](/meta-schemas) section.
+For complete documentation on `metaschemas` references, see the [metaschema](/meta-schemas/meta-schema-basics) section.
 
 #### `metaschema`
 
@@ -1017,7 +1017,7 @@ const validate = jetValidator.compile({
 
 Enables `$data` references in schemas, allowing validation constraints to dynamically reference values from the data being validated. Instead of static constraint values, you can use runtime data values.
 
-For complete documentation on `$data` references, see the [$data References](/advanced-validation) section.
+For complete documentation on `$data` references, see the [$data References](/advanced/data-keyword) section.
 
 **Quick Example:**
 

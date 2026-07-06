@@ -1,0 +1,278 @@
+---
+title: "Setup"
+description: "Download meta-schema files, use the auto-generated loader, and load them into a JetValidator instance."
+---
+
+# Setting Up Meta-Schemas
+
+Setting up meta-schemas is a **one-time process** with three steps:
+
+1. Download meta-schema files
+2. Use the generated loader
+3. Load into your @jetio/validator instance
+
+---
+
+## Step 1: Download Meta-Schemas
+
+Use the @jetio/validator CLI to download meta-schema JSON files.
+
+```bash
+npx jet-meta load <version> [outputDir]
+```
+
+**Available versions:** `draft-06`, `draft-07`, `draft/2019-09`, `draft/2020-12`, or `all`.
+
+**Output directory:** defaults to `./meta-schemas`, or pass any path.
+
+### Download Draft-07 (most common)
+
+```bash
+npx jet-meta load draft-07
+```
+
+```
+Loading meta-schema: draft-07
+Output directory: /path/to/your-project/meta-schemas
+  ✓ meta-schemas/draft-07/schema.json
+✓ Saved draft-07 to meta-schemas/draft-07
+
+✓ Generated loader: meta-schemas/loader.ts
+
+Usage:
+  import { loadDraft07, loadAllMetaSchemas } from './meta-schemas/loader';
+```
+
+Generated files:
+
+```
+meta-schemas/
+├── draft-07/
+│   └── schema.json
+└── loader.ts
+```
+
+### Download Draft 2020-12
+
+```bash
+npx jet-meta load draft/2020-12
+```
+
+```
+Loading meta-schema: draft/2020-12
+  ✓ meta-schemas/draft/2020-12/schema.json
+  ✓ meta-schemas/draft/2020-12/meta/core.json
+  ✓ meta-schemas/draft/2020-12/meta/applicator.json
+  ✓ meta-schemas/draft/2020-12/meta/unevaluated.json
+  ✓ meta-schemas/draft/2020-12/meta/validation.json
+  ✓ meta-schemas/draft/2020-12/meta/meta-data.json
+  ✓ meta-schemas/draft/2020-12/meta/format-annotation.json
+  ✓ meta-schemas/draft/2020-12/meta/content.json
+✓ Saved draft/2020-12 to meta-schemas/draft/2020-12
+```
+
+**Why so many files?** Draft 2019-09 and 2020-12 use a modular vocabulary system. The main schema references sub-schemas for different concerns:
+
+- `core.json` — core keywords (`$id`, `$ref`, `$schema`)
+- `applicator.json` — applicator keywords (`properties`, `items`, `allOf`)
+- `validation.json` — validation keywords (`type`, `minimum`, `pattern`)
+- `unevaluated.json` — unevaluated keywords (`unevaluatedProperties`)
+- `meta-data.json` — metadata keywords (`title`, `description`)
+- `format-annotation.json` — format annotations
+- `content.json` — content keywords (`contentMediaType`)
+
+### Download all drafts
+
+```bash
+npx jet-meta load all
+```
+
+### Custom output directory
+
+```bash
+npx jet-meta load draft-07 ./src/validation/meta-schemas
+```
+
+### Add to package.json scripts
+
+```json
+{
+  "scripts": {
+    "meta:download": "jet-meta load all ./meta-schemas",
+    "meta:draft-07": "jet-meta load draft-07 ./meta-schemas"
+  }
+}
+```
+
+---
+
+## Step 2: The Auto-Generated Loader
+
+The CLI generates `loader.ts` with functions to load meta-schemas into @jetio/validator. It imports the JSON files, creates one load function per draft, registers each meta-schema under both its full URL and a short alias, handles all vocabulary sub-schemas, and provides `loadAllMetaSchemas()` for loading everything at once.
+
+```typescript
+// meta-schemas/loader.ts (AUTO-GENERATED)
+import schema_draft_07 from "./draft-07/schema.json";
+import schema_draft_2020_12 from "./draft/2020-12/schema.json";
+import schema_draft_2020_12_core from "./draft/2020-12/meta/core.json";
+import schema_draft_2020_12_applicator from "./draft/2020-12/meta/applicator.json";
+import schema_draft_2020_12_unevaluated from "./draft/2020-12/meta/unevaluated.json";
+import schema_draft_2020_12_validation from "./draft/2020-12/meta/validation.json";
+import schema_draft_2020_12_meta_data from "./draft/2020-12/meta/meta-data.json";
+import schema_draft_2020_12_format_annotation from "./draft/2020-12/meta/format-annotation.json";
+import schema_draft_2020_12_content from "./draft/2020-12/meta/content.json";
+
+export function loadDraft07(jetValidator: any): void {
+  jetValidator.addMetaSchema(
+    schema_draft_07,
+    "https://json-schema.org/draft-07/schema",
+  );
+  jetValidator.addMetaSchema(schema_draft_07, "draft-07");
+}
+
+export function loadDraft202012(jetValidator: any): void {
+  jetValidator.addMetaSchema(
+    schema_draft_2020_12,
+    "https://json-schema.org/draft/2020-12/schema",
+  );
+  jetValidator.addMetaSchema(schema_draft_2020_12, "draft/2020-12");
+
+  jetValidator.addSchema(
+    schema_draft_2020_12_core,
+    "https://json-schema.org/draft/2020-12/meta/core",
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_applicator,
+    "https://json-schema.org/draft/2020-12/meta/applicator",
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_unevaluated,
+    "https://json-schema.org/draft/2020-12/meta/unevaluated",
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_validation,
+    "https://json-schema.org/draft/2020-12/meta/validation",
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_meta_data,
+    "https://json-schema.org/draft/2020-12/meta/meta-data",
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_format_annotation,
+    "https://json-schema.org/draft/2020-12/meta/format-annotation",
+  );
+  jetValidator.addSchema(
+    schema_draft_2020_12_content,
+    "https://json-schema.org/draft/2020-12/meta/content",
+  );
+}
+
+export function loadAllMetaSchemas(jetValidator: any): void {
+  loadDraft07(jetValidator);
+  loadDraft202012(jetValidator);
+}
+```
+
+---
+
+## Step 3: Load Into Your Instance
+
+### Load all meta-schemas
+
+```typescript
+// src/validation/setup.ts
+import { JetValidator } from "@jetio/validator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07", // default fallback
+});
+
+loadAllMetaSchemas(jetValidator);
+
+export { jetValidator };
+```
+
+### Load specific drafts only
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+import { loadDraft07, loadDraft202012 } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator();
+
+loadDraft07(jetValidator);
+loadDraft202012(jetValidator);
+
+// Draft-06 not loaded — throws if used
+const schema = {
+  $schema: "https://json-schema.org/draft-06/schema",
+  type: "string",
+};
+
+try {
+  jetValidator.validateSchema(schema);
+} catch (error) {
+  console.error(error.message);
+  // Meta-schema "draft-06" is not loaded.
+  // Load it using: loadDraft06(jetValidator)
+}
+```
+
+### Full application structure
+
+```typescript
+// config/validation.ts
+import { JetValidator } from "@jetio/validator";
+import { loadAllMetaSchemas } from "../meta-schemas/loader";
+
+export const createValidator = () => {
+  const jetValidator = new JetValidator({
+    allErrors: true,
+    validateSchema: true,
+    metaSchema: "draft-07",
+    verbose: process.env.NODE_ENV === "development",
+  });
+
+  loadAllMetaSchemas(jetValidator);
+  return jetValidator;
+};
+
+export const jetValidator = createValidator();
+```
+
+```typescript
+// validators/user.validator.ts
+import { jetValidator } from "../config/validation";
+import { userSchema } from "../schemas/user.schema";
+
+jetValidator.addSchema(userSchema);
+
+export const validateUser = jetValidator.getCompiledSchema("user");
+```
+
+```typescript
+// api/users.controller.ts
+import { validateUser } from "../validators/user.validator";
+
+export const createUser = (req, res) => {
+  const result = validateUser(req.body);
+
+  if (!result) {
+    return res.status(400).json({ errors: validateUser.errors });
+  }
+
+  // Process valid user...
+};
+```
+
+---
+
+## Important Notes
+
+1. **One-time download** — run `jet-meta load` once and commit the generated files to version control.
+2. **Offline-first** — after downloading, no network requests are needed. Everything is bundled.
+3. **Tree-shaking** — only imported functions and their schemas are bundled. Load only Draft-07 and the 2020-12 schemas stay out of your bundle.
+4. **Type safety** — the loader is TypeScript-compatible; all JSON files are properly typed.
+5. **Commit the files** — do **not** gitignore `meta-schemas/`. Commit it.

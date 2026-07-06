@@ -1,0 +1,345 @@
+---
+title: "Resolution & Loading"
+description: "How JetValidator resolves references: inlining vs function calls, the draft option, no stack overflows, caching, loadSchema, and debugging resolution."
+---
+
+# Resolution & Loading
+
+JetValidator resolves all references at compile time, turning a schema with `$ref`/`$dynamicRef` into optimized validation code before any data is validated. This page centralises everything reference-related: how references become code, the options that control resolution, external loading, and how to debug it.
+
+---
+
+## How References Become Code
+
+A referenced schema is compiled **once** and reused. There are two ways JetValidator wires that reuse:
+
+**Function calls (default fallback).** The referenced schema is compiled into its own named validation function. Every `$ref` pointing at it calls that function. The schema is compiled a single time no matter how many references point to it, so there's no duplication — but each reference pays the overhead of a function call during validation.
+
+**Inlining.** Instead of calling a function, the referenced schema's generated code is placed directly at the reference site. This removes the function-call overhead entirely and is significantly faster, at the cost of more generated code.
+
+Which one is used is controlled by [`inlineRefs`](#inlinerefs).
+
+---
+
+## `inlineRefs`
+
+**Type:** `boolean` — **Default:** `true`
+
+Controls whether references (`$ref`, `$dynamicRef`, internal or external) are inlined or compiled to separate functions.
+
+```typescript
+const jetValidator = new JetValidator({ inlineRefs: true });
+```
+
+With inlining on, a referenced schema is compiled directly at its pointer rather than as a called function. Because function calls add substantial overhead in hot validation paths, this drastically improves performance.
+
+A reference can be inlined only under two conditions:
+
+1. **The referenced schema is inlineable itself** — it either contains no `$ref`/`$dynamicRef`, or it does but those have already been inlined. (In other words, it bottoms out in concrete keywords.)
+2. **It is not circular.** Circular references are always compiled to functions, since inlining them would never terminate.
+
+Anything that fails these — most importantly circular references — falls back to the function-call approach automatically. The two strategies coexist in a single compiled validator: inlineable references are placed directly, and the rest become functions.
+
+**When to change it:**
+
+- Set `false` if you want less generated code or you're memory-sensitive.
+- Keep the default `true` for maximum validation speed.
+
+---
+
+## `draft`
+
+**Type:** `'draft2019-09' | 'draft2020-12' | 'draft7' | 'draft6'` — **Default:** `'draft2019-09'`
+
+Controls how the `$ref` keyword behaves relative to its sibling keywords — the one place JetValidator needs to know the draft, because this behavior changed across JSON Schema versions.
+
+```typescript
+const jetValidator = new JetValidator({ draft: "draft7" });
+```
+
+- **`draft2019-09` / `draft2020-12`** — all keywords at a schema level run **alongside** `$ref`; siblings are not ignored.
+- **`draft7` / `draft6`** — when `$ref` is present at a schema level, **all other keywords at that level are ignored** and only `$ref` is evaluated.
+
+Set `draft7`/`draft6` if you need strict Draft-07-or-earlier `$ref` semantics; keep the default for modern behavior where keywords coexist with `$ref`. You can skip it entirely if your `$ref`s never have sibling keywords.
+
+---
+
+## No Stack Overflow on Circular References
+
+Because resolution happens at **compile time**, JetValidator's recursion only goes as deep as the data being validated — never the schema's reference graph. Circular and recursive references that crash other validators are handled cleanly.
+
+Where AJV throws on complex `$ref` patterns:
+
+```
+RangeError: Maximum call stack size exceeded
+```
+
+JetValidator compiles them without issue. On the official JSON Schema Test Suite (Draft 2020-12) `ref` tests, AJV has 8 stack-overflow failures; JetValidator has none. Your schemas won't unexpectedly crash in production, complex compositions just work, and you never have to restructure a schema to dodge a validator limitation.
+
+---
+
+## Caching — `addUsedSchema`
+
+**Type:** `boolean` — **Default:** `true`
+
+Caches externally referenced schemas so each external schema is fetched **once** and reused throughout compilation and validation. The first reference to a URL fetches and stores it; later references to the same URL reuse the cached copy instead of fetching again.
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    console.log(`Fetching: ${uri}`);
+    return fetch(uri).then((r) => r.json());
+  },
+  addUsedSchema: true,
+});
+
+const schema1 = {
+  properties: { user: { $ref: "https://api.example.com/user.json" } },
+};
+const schema2 = {
+  properties: { admin: { $ref: "https://api.example.com/user.json" } }, // same URL
+};
+
+await jetValidator.compileAsync(schema1);
+// Fetching: https://api.example.com/user.json
+
+await jetValidator.compileAsync(schema2);
+// (no output — served from cache)
+```
+
+With `addUsedSchema: false`, external references are fetched every time. Identical references within a single schema are always deduplicated regardless of this setting — a definition referenced many times is compiled once and reused.
+
+---
+
+## `loadSchema` — Loading External Schemas
+
+**Type:** `(uri: string) => Promise<SchemaDefinition> | SchemaDefinition` — **Default:** `undefined`
+
+The `loadSchema` callback resolves external references. It's called with the URI from a `$ref`/`$dynamicRef` and must return a valid schema object. Only external references trigger it — local references within the same schema never do. It can fetch from anywhere: HTTP APIs, databases, or the file system.
+
+```typescript
+interface ValidatorOptions {
+  loadSchema?: (uri: string) => Promise<SchemaDefinition> | SchemaDefinition;
+  addUsedSchema?: boolean;
+}
+```
+
+External references require `compileAsync` (or `validateAsync`), since fetching is asynchronous. A fetched schema is cached only if `addUsedSchema` is `true`.
+
+### Basic HTTP fetch
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`Failed to fetch ${uri}: ${response.status}`);
+    return response.json();
+  },
+  addUsedSchema: true,
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    user: { $ref: "https://api.example.com/schemas/user.json" },
+  },
+};
+
+const validate = await jetValidator.compileAsync(schema);
+```
+
+### With authentication
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri, {
+      headers: {
+        Authorization: `Bearer ${process.env.API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+    return response.json();
+  },
+  addUsedSchema: true,
+});
+```
+
+### With timeout
+
+```typescript
+const fetchWithTimeout = async (uri, timeoutMs = 5000) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(uri, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error.name === "AbortError") throw new Error(`Timeout fetching ${uri}`);
+    throw error;
+  }
+};
+
+const jetValidator = new JetValidator({
+  loadSchema: fetchWithTimeout,
+  addUsedSchema: true,
+});
+```
+
+### From a database with cache fallback
+
+`loadSchema` can pull from anywhere. This example checks Redis first and falls back to HTTP, caching the result:
+
+```typescript
+import { createClient } from "redis";
+
+const redis = createClient();
+await redis.connect();
+
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const cached = await redis.get(`schema:${uri}`);
+    if (cached) return JSON.parse(cached);
+
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+    const schema = await response.json();
+
+    await redis.setEx(`schema:${uri}`, 3600, JSON.stringify(schema));
+    return schema;
+  },
+  addUsedSchema: true,
+});
+```
+
+### From the file system
+
+```typescript
+import { readFile } from "fs/promises";
+import { resolve } from "path";
+
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const filePath = uri.replace("file://", "");
+    const absolutePath = resolve(process.cwd(), filePath);
+    const content = await readFile(absolutePath, "utf-8");
+    return JSON.parse(content);
+  },
+  addUsedSchema: true,
+});
+
+const schema = {
+  properties: { user: { $ref: "file:///schemas/user.json" } },
+};
+
+const validate = await jetValidator.compileAsync(schema);
+```
+
+### Multiple sources
+
+Dispatch on the URI scheme to support several sources at once:
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    if (uri.startsWith("http://") || uri.startsWith("https://")) {
+      const response = await fetch(uri);
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+      return response.json();
+    }
+    if (uri.startsWith("file://")) {
+      const { readFile } = await import("fs/promises");
+      const { resolve } = await import("path");
+      const content = await readFile(resolve(process.cwd(), uri.replace("file://", "")), "utf-8");
+      return JSON.parse(content);
+    }
+    throw new Error(`Unsupported URI scheme: ${uri}`);
+  },
+  addUsedSchema: true,
+});
+```
+
+---
+
+## Avoiding Async Entirely
+
+If you'd rather keep compilation synchronous, register the referenced schemas up front with `addSchema`. Once a schema is in the registry, references to its `$id` (or `id`) resolve locally without `loadSchema` or `compileAsync`:
+
+```typescript
+const addressSchema = {
+  $id: "https://example.com/address",
+  type: "object",
+  properties: {
+    street:  { type: "string" },
+    city:    { type: "string" },
+    zipCode: { type: "string", pattern: "^[0-9]{5}$" },
+  },
+  required: ["street", "city", "zipCode"],
+};
+
+const personSchema = {
+  type: "object",
+  properties: {
+    name:        { type: "string" },
+    homeAddress: { $ref: "https://example.com/address" },
+    workAddress: { $ref: "https://example.com/address" },
+  },
+  required: ["name", "homeAddress"],
+};
+
+jetValidator.addSchema(addressSchema);
+const validatePerson = jetValidator.compile(personSchema); // fully synchronous
+```
+
+---
+
+## Debugging Reference Resolution — `debug`
+
+**Type:** `boolean` — **Default:** `false`
+
+Enables real-time analytics of how references are resolved. Especially useful when inlining is on, since it shows exactly which references were inlined and which fell back to functions.
+
+```typescript
+const jetValidator = new JetValidator({ debug: true });
+```
+
+When enabled, the resolver logs each reference as it's handled, then a summary. Each entry shows the schema being resolved (or a generated short ID if it has none), whether it's a `$ref` or `$dynamicRef`, the path where the reference lives, the target it points to, whether the target is local or external, and whether it was inlined or skipped (with the reason).
+
+Sample output:
+
+```
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/maxProperties -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Skipping Inlining $ref at #/properties/minItems (#/$defs/nonNegativeIntegerDefault0 contains refs)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $ref at #/allOf/0 (https://json-schema.org/draft/2020-12/meta/core# contains refs) - (external schema)
+[Resolver] Inlining $ref at #/properties/$recursiveRef -> https://json-schema.org/draft/2020-12/meta/core#/$defs/uriReferenceString - (external schema)
+
+[Resolver] Inlining Summary:
+  Total references: 74
+  Inlined: 43 (58.1%)
+  Skipped: 31 (contain circular)
+  Function calls saved: ~43
+```
+
+References without the `(external schema)` tag are local — within the same schema — even if the target path contains a URL. Short random strings like `stit0c` are auto-generated IDs for schemas with no explicit ID.
+
+Because it logs to the console on every reference, `debug` affects compilation performance and is meant for debugging only, not production.
+
+---
+
+## Summary
+
+- **`$ref`** — static references: JSON Pointers, `$defs`/`definitions`, anchors, external URLs
+- **`$dynamicRef`** — dynamic references resolved against `$dynamicAnchor`
+- **`$id`** (or `id`) — establishes base URI scopes for modular composition
+- **`inlineRefs`** — inline references for speed (default) or compile to functions to save memory
+- **`draft`** — controls whether `$ref` siblings are evaluated (2019-09/2020-12) or ignored (draft-07/06)
+- **`loadSchema`** — loads external schemas from HTTP, databases, or the file system
+- **`addUsedSchema`** — caches fetched schemas to avoid re-fetching
+- **`debug`** — logs inlining decisions in real time
+- Compile-time resolution means **no stack overflows** and fast, function-based or inlined validation
+
+Prefer static `$ref` over `$dynamicRef` when possible, register reusable schemas with `$id`, enable `addUsedSchema` for caching, and handle `loadSchema` errors gracefully.

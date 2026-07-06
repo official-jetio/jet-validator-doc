@@ -1,0 +1,187 @@
+---
+title: "Standalone Generation"
+description: "Generate standalone validation functions that run without the @jetio/validator library at runtime."
+---
+
+# Standalone Generation
+
+@jetio/validator generates **standalone validation functions by default** — the compiled output can execute independently without requiring the @jetio/validator library at runtime.
+
+However, certain features (formats and custom keywords) require runtime dependencies that are injected via the Function constructor during normal compilation. Standalone generation makes these explicit.
+
+---
+
+## How Normal Compilation Works
+
+During normal compilation, @jetio/validator uses the Function constructor to inject runtime dependencies:
+
+```typescript
+return new Function("formatValidators", "customKeywords", generatedCodeString)(
+  formatValidatorsObject,
+  customKeywordsObject,
+);
+```
+
+During schema resolution, all formats used in the schema are collected and built into a `formatValidators` object — this applies to both built-in and custom formats.
+
+The challenge with standalone generation is that formats can be functions that import other functions, creating dependency chains that can't be easily serialized. Custom keywords have similar requirements depending on their type. This is why standalone generation requires explicit configuration.
+
+---
+
+## `generateStandalone()`
+
+**Signature:**
+
+```typescript
+generateStandalone(
+  schema: SchemaDefinition,
+  config?: ValidatorOptions,
+): {
+  code: string;
+  functionName: string;
+  formatSetup?: string;
+  imports: string[];
+}
+```
+
+**Return values:**
+
+| Field          | Description                                      |
+| -------------- | ------------------------------------------------ |
+| `code`         | The complete validation function as a string     |
+| `functionName` | The generated function name                      |
+| `formatSetup`  | Setup code for formats that require imports      |
+| `imports`      | Array of format names that need external imports |
+
+**Basic usage:**
+
+```typescript
+const result = jetValidator.generateStandalone(schema, config);
+
+console.log(result.code); // complete validation function
+console.log(result.functionName); // generated function name
+console.log(result.formatSetup); // setup code for formats needing imports
+console.log(result.imports); // format names needing external imports
+```
+
+---
+
+## Dedicated Instance
+
+Always create a **separate @jetio/validator instance** specifically for standalone generation:
+
+```typescript
+const standaloneValidator = new JetValidator({
+  formats: ["email", "uri", "date"], // formats to inline when $data is used
+  overwrittenFormats: ["date"], // built-in formats you've customized
+  formatMode: "full", // "fast" or "full"
+});
+
+const result = standaloneValidator.generateStandalone(schema);
+```
+
+---
+
+## Configuration Options
+
+### `formats: string[]`
+
+Specifies which formats to inline when `$data` is present in the schema. Without this, all formats from the selected `formatMode` are inlined.
+
+```typescript
+{
+  formats: ["email", "uri", "date", "ipv4"];
+}
+```
+
+> Only relevant when the schema uses `$data` for format references. Ignored otherwise.
+
+### `overwrittenFormats: string[]`
+
+Lists built-in formats you've replaced with custom implementations. @jetio/validator skips dependency resolution for these.
+
+```typescript
+{
+  overwrittenFormats: ["date"];
+} // you provided a custom date validator
+```
+
+### `formatMode: "fast" | "full"`
+
+Which built-in format set to use:
+
+- `"full"` — function-based validators, comprehensive validation
+- `"fast"` — regex-based validators, better performance
+
+---
+
+## Example: Simple Standalone (No $data)
+
+```typescript
+const validator = new JetValidator({ formatMode: "full" });
+
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email" },
+    age: { type: "number", minimum: 0 },
+  },
+};
+
+const result = validator.generateStandalone(schema, {});
+console.log(result.code);
+```
+
+**Generated output:**
+
+```javascript
+const format_email = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+@...$/i;
+
+function validate(rootData) {
+  const var0 = rootData;
+  if (typeof var0 !== "object" || Array.isArray(var0) || var0 === null) {
+    validate.errors = [{
+      dataPath: "/",
+      schemaPath: "#",
+      keyword: "type",
+      expected: "object",
+      message: "Invalid type."
+    }];
+    return false;
+  }
+
+  if (var0["email"] !== undefined) {
+    const var1 = var0["email"];
+    if (typeof var1 !== "string") {
+      validate.errors = [{...}];
+      return false;
+    }
+    if (!format_email.test(var1)) {
+      validate.errors = [{...}];
+      return false;
+    }
+  }
+
+  if (var0["age"] !== undefined) {
+    const var2 = var0["age"];
+    if (typeof var2 !== "number") {
+      validate.errors = [{...}];
+      return false;
+    }
+    if (var2 < 0) {
+      validate.errors = [{...}];
+      return false;
+    }
+  }
+
+  return true;
+}
+```
+
+Only the `email` format validator is inlined — no format object is created because `$data` isn't used.
+
+---
+
+## Note on Output Formatting
+
+The generated code is not pretty-printed. Run it through a formatter (e.g. Prettier in VS Code) if you need readable output.

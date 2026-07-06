@@ -1,0 +1,393 @@
+---
+title: "Static References ($ref)"
+description: "Reuse and compose schemas with $ref: JSON Pointers, $defs, local and recursive references, external HTTP refs, fragments, and anchors."
+---
+
+# Static References — `$ref`
+
+The `$ref` keyword references another schema or schema fragment, enabling reuse, modular composition, and external loading. JetValidator resolves `$ref` at compile time, generating optimized function calls or inlining the referenced schema directly.
+
+---
+
+## Full Paths in Errors
+
+JetValidator returns the complete path to a referenced schema in errors — from the origin all the way to the failure point:
+
+```typescript
+const error = {
+  schemaPath:
+    "#/$ref/https://json-schema.org/draft/2020-12/schema/allOf/0/$ref/https://json-schema.org/draft/2020-12/meta/core",
+};
+```
+
+Path breakdown:
+- `#/` — the root schema
+- `$ref/https://json-schema.org/draft/2020-12/schema/` — an external reference
+- `allOf/0/` — the first sub-schema in `allOf`
+- `$ref/https://json-schema.org/draft/2020-12/meta/core` — another external reference
+
+This full execution path makes it easy to trace exactly where validation failed, especially with deeply nested external references.
+
+---
+
+## Reference Types
+
+| Type                  | Keyword                          | Example                            | Use Case                 |
+| --------------------- | -------------------------------- | ---------------------------------- | ------------------------ |
+| **Static Reference**  | `$ref`                           | `{ "$ref": "#/definitions/user" }` | Reuse schema fragments   |
+| **Dynamic Reference** | `$dynamicRef`                    | `{ "$dynamicRef": "#meta" }`       | Polymorphic validation   |
+| **Anchor Reference**  | `$anchor` + `$ref`               | `{ "$ref": "#userAnchor" }`        | Named reference points   |
+| **Dynamic Anchor**    | `$dynamicAnchor` + `$dynamicRef` | `{ "$dynamicRef": "#meta" }`       | Runtime scope resolution |
+
+Dynamic references have their own page — see [Dynamic References](/references/dynamic-refs).
+
+---
+
+## JSON Pointer References
+
+JSON Pointers (RFC 6901) use `/` to navigate the schema structure: `#/definitions/user` points to `schema.definitions.user`, and `#` points to the root.
+
+### Basic definition reference
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    user:  { $ref: "#/definitions/user" },
+    admin: { $ref: "#/definitions/user" },
+  },
+  definitions: {
+    user: {
+      type: "object",
+      properties: {
+        name:  { type: "string" },
+        email: { type: "string", format: "email" },
+      },
+      required: ["name", "email"],
+    },
+  },
+};
+
+const validate = jetValidator.compile(schema);
+
+validate({
+  user:  { name: "John", email: "john@example.com" },
+  admin: { name: "Alice", email: "alice@example.com" },
+}); // ✅ both use the same definition
+```
+
+### Deep path references
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    shippingAddress: { $ref: "#/definitions/addresses/shipping" },
+    billingAddress:  { $ref: "#/definitions/addresses/billing" },
+  },
+  definitions: {
+    addresses: {
+      shipping: {
+        type: "object",
+        properties: {
+          street:  { type: "string" },
+          city:    { type: "string" },
+          zipCode: { type: "string", pattern: "^[0-9]{5}$" },
+        },
+        required: ["street", "city", "zipCode"],
+      },
+      billing: {
+        type: "object",
+        properties: {
+          street:  { type: "string" },
+          city:    { type: "string" },
+          country: { type: "string" },
+        },
+        required: ["street", "city", "country"],
+      },
+    },
+  },
+};
+```
+
+### `$defs` (Draft 2019-09+)
+
+`$defs` is the modern replacement for `definitions`:
+
+```typescript
+const schema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: {
+    user:    { $ref: "#/$defs/user" },
+    product: { $ref: "#/$defs/product" },
+  },
+  $defs: {
+    user: {
+      type: "object",
+      properties: {
+        id:   { type: "integer" },
+        name: { type: "string" },
+      },
+    },
+    product: {
+      type: "object",
+      properties: {
+        id:    { type: "integer" },
+        name:  { type: "string" },
+        price: { type: "number" },
+      },
+    },
+  },
+};
+```
+
+> JetValidator supports draft-06 through 2020-12. Use `definitions` for Draft-07 and earlier, `$defs` for 2019-09+.
+
+### Root reference (recursive)
+
+`$ref: "#"` references the root schema, enabling recursive structures:
+
+```typescript
+const schema = {
+  $id: "https://example.com/recursive-schema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    children: {
+      type: "array",
+      items: { $ref: "#" }, // recursive
+    },
+  },
+};
+
+const validate = jetValidator.compile(schema);
+
+validate({
+  name: "Root",
+  children: [
+    { name: "Child 1", children: [{ name: "Grandchild", children: [] }] },
+    { name: "Child 2", children: [] },
+  ],
+}); // ✅ recursive tree
+```
+
+---
+
+## Local References
+
+References within the same schema document need no external loading.
+
+### Shared validation rules
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    username: { $ref: "#/definitions/identifier" },
+    groupId:  { $ref: "#/definitions/identifier" },
+    userId:   { $ref: "#/definitions/identifier" },
+  },
+  definitions: {
+    identifier: {
+      type: "string",
+      pattern: "^[a-zA-Z0-9_-]{3,20}$",
+      minLength: 3,
+      maxLength: 20,
+    },
+  },
+};
+```
+
+### Recursive cross-references
+
+A definition can reference itself for tree/graph structures:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    parent: { $ref: "#/definitions/node" },
+  },
+  definitions: {
+    node: {
+      type: "object",
+      properties: {
+        value: { type: "string" },
+        left:  { anyOf: [{ type: "null" }, { $ref: "#/definitions/node" }] },
+        right: { anyOf: [{ type: "null" }, { $ref: "#/definitions/node" }] },
+      },
+    },
+  },
+};
+
+const validate = jetValidator.compile(schema);
+
+validate({
+  parent: {
+    value: "root",
+    left:  { value: "left-child", left: null, right: null },
+    right: { value: "right-child", left: null, right: null },
+  },
+}); // ✅ binary tree
+```
+
+Circular and recursive references never cause stack overflows in JetValidator — see [Resolution & Loading](/references/resolution).
+
+---
+
+## External HTTP References
+
+Load schemas from remote URLs. Requires a `loadSchema` callback and `compileAsync` (covered fully on the [Resolution & Loading](/references/resolution) page).
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+    return response.json();
+  },
+  addUsedSchema: true, // cache fetched schemas
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    address: { $ref: "https://api.example.com/schemas/address.json" },
+  },
+};
+
+const validate = await jetValidator.compileAsync(schema);
+// Fetches address.json, then compiles
+
+validate({ address: { street: "123 Main St", city: "Boston", zipCode: "02101" } });
+```
+
+External references are resolved recursively — if a fetched schema references another remote schema, that one is fetched too. Local references (registered via `addSchema`) resolve directly without fetching, so a schema can freely mix local and remote `$ref`s.
+
+### Fragments in external schemas
+
+You can point to a specific part of an external schema using a JSON Pointer fragment. The remote schema is fetched once, and any referenced fragments are extracted from it:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    favoriteBook: {
+      $ref: "https://api.example.com/schemas/library.json#/definitions/book",
+    },
+    currentMagazine: {
+      $ref: "https://api.example.com/schemas/library.json#/definitions/magazine",
+    },
+  },
+};
+
+const validate = await jetValidator.compileAsync(schema);
+```
+
+---
+
+## Anchors — `$anchor`
+
+`$anchor` creates a named reference point. `$ref: "#anchorName"` references it. Anchors are resolved at compile time.
+
+### Local anchor reference
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    primaryUser:   { $ref: "#userSchema" },
+    secondaryUser: { $ref: "#userSchema" },
+  },
+  definitions: {
+    user: {
+      $anchor: "userSchema",
+      type: "object",
+      properties: {
+        name:  { type: "string" },
+        email: { type: "string", format: "email" },
+      },
+    },
+  },
+};
+
+const validate = jetValidator.compile(schema);
+// $anchor: "userSchema" creates the reference point;
+// $ref: "#userSchema" resolves to it
+```
+
+### Multiple anchors
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    user:  { $ref: "#userType" },
+    admin: { $ref: "#adminType" },
+  },
+  definitions: {
+    user: {
+      $anchor: "userType",
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        role: { enum: ["user"] },
+      },
+    },
+    admin: {
+      $anchor: "adminType",
+      type: "object",
+      properties: {
+        name:        { type: "string" },
+        role:        { enum: ["admin"] },
+        permissions: { type: "array" },
+      },
+    },
+  },
+};
+```
+
+### External anchor fragments
+
+An anchor in an external schema is referenced with `<url>#anchorName`:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    person:  { $ref: "https://api.example.com/schemas/entities.json#personEntity" },
+    company: { $ref: "https://api.example.com/schemas/entities.json#companyEntity" },
+  },
+};
+
+const validate = await jetValidator.compileAsync(schema);
+```
+
+### Anchor and path resolve to the same target
+
+An anchor name and the JSON Pointer path to the same schema resolve identically:
+
+```typescript
+const schema = {
+  $id: "https://example.com/precedence",
+  type: "object",
+  properties: {
+    field1: { $ref: "#myAnchor" },              // via anchor
+    field2: { $ref: "#/definitions/explicit" }, // via path
+  },
+  definitions: {
+    explicit: {
+      $anchor: "myAnchor",
+      type: "string",
+      minLength: 5,
+    },
+  },
+};
+
+// Both references resolve to the same schema location
+```
+
+### `$ref` to a `$dynamicAnchor`
+
+`$ref` can point to a schema marked with `$dynamicAnchor`, but it resolves **statically** — no dynamic scope behavior occurs. When both a `$anchor` and a `$dynamicAnchor` share a name in the current scope, `$ref` prefers the static `$anchor`. Scope and priority rules are detailed on the [Dynamic References](/references/dynamic-refs) page.

@@ -1,0 +1,233 @@
+---
+title: "Format Handling"
+description: "How formats are inlined in standalone mode: the three scenarios, dependencies, and overwritten formats."
+---
+
+# Format Handling in Standalone Mode
+
+How formats get inlined depends on whether your schema uses `$data` for format references, and whether you've specified a `formats` array.
+
+---
+
+## Scenario 1: No $data, Specific Formats Used
+
+When your schema references formats statically (not via `$data`):
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email" },
+    age: { type: "number" },
+  },
+};
+```
+
+**Behavior:** Only the formats actually used in the schema are inlined. No `formatValidators` object is created.
+
+```javascript
+// Generated output
+const format_email = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+@...$/i;
+
+if (!format_email.test(data.email)) {
+  validate.errors = [{...}];
+  return false;
+}
+```
+
+---
+
+## Scenario 2: $data Present, No `formats` Array
+
+When your schema uses `$data` for a format reference but you haven't specified which formats to include:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    formatType: { type: "string" },
+    value: { type: "string", format: { $data: "1/formatType" } },
+  },
+};
+
+const config = { formatMode: "full", $data: true };
+// No formats array specified
+```
+
+**Behavior:** **All** formats from the selected `formatMode` plus any custom formats are inlined, and a `formatValidators` lookup object is created.
+
+```javascript
+// Generated output — all formats inlined
+const format_email = /^[a-zA-Z0-9...$/i;
+const format_uri   = /^[a-z][a-z0-9+\-.]*:...$/i;
+const format_date  = function date(str) { ... };
+// ... every other format
+
+const formatValidators = {
+  "email": format_email,
+  "uri":   format_uri,
+  "date":  format_date,
+  // ... all formats
+};
+
+// Dynamic lookup at validation time
+const formatType = rootData.formatType;
+const formatValidator = formatValidators[formatType];
+if (formatValidator && typeof var1 === "string") {
+  const isValid = typeof formatValidator === "function"
+    ? formatValidator(var1)
+    : formatValidator.test(var1);
+  if (!isValid) {
+    validate.errors = [{...}];
+    return false;
+  }
+}
+```
+
+This can bloat your output significantly — 30+ format validators inlined unnecessarily.
+
+---
+
+## Scenario 3: $data Present, With `formats` Array ✅ Recommended
+
+Specify exactly which formats to include:
+
+```typescript
+const validator = new JetValidator({
+  formats: ["email", "uri", "ipv4"],
+  $data: true,
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    formatType: { type: "string" },
+    value: { type: "string", format: { $data: "1/formatType" } },
+  },
+};
+
+const result = validator.generateStandalone(schema, {});
+```
+
+**Behavior:** Only the listed formats are inlined and included in the `formatValidators` object.
+
+```javascript
+// Generated output — only specified formats
+const format_email = /^[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+@...$/i;
+const format_uri = /^[a-z][a-z0-9+\-.]*:...$/i;
+const format_ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}...$/;
+
+const formatValidators = {
+  email: format_email,
+  uri: format_uri,
+  ipv4: format_ipv4,
+};
+```
+
+And the full generated function:
+
+```javascript
+function validate(rootData) {
+  const var0 = rootData;
+  if (typeof var0 !== "object" || Array.isArray(var0) || var0 === null) {
+    validate.errors = [{...}];
+    return false;
+  }
+
+  if (var0["value"] !== undefined) {
+    const var1 = var0["value"];
+    if (typeof var1 !== "string") {
+      validate.errors = [{...}];
+      return false;
+    }
+
+    const $data1 = rootData["formatType"];
+    if (typeof $data1 === "string") {
+      const formatValidator = formatValidators[$data1];
+      if (formatValidator && typeof var1 === "string") {
+        const isValid = typeof formatValidator === "function"
+          ? formatValidator(var1)
+          : formatValidator.test(var1);
+        if (!isValid) {
+          validate.errors = [{...}];
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+```
+
+> Always specify the `formats` array when using `$data` unless you explicitly want all formats inlined.
+
+---
+
+## Format Dependencies
+
+Some formats depend on others. @jetio/validator resolves and inlines dependencies automatically, each only once.
+
+```typescript
+// Schema uses date-time
+{ type: "string", format: "date-time" }
+```
+
+```javascript
+// Generated output — dependencies inlined first
+function format_date(str) {
+  const matches = DATE_REGEX.exec(str);
+  // ...
+}
+
+function format_time(strictTimeZone) {
+  return function time(str) { ... };
+}
+
+function format_date_time(str) {
+  const dateTime = str.split(DATE_TIME_SEPARATOR);
+  return dateTime.length === 2 &&
+         format_date(dateTime[0]) &&
+         format_time(dateTime[1]);
+}
+```
+
+**Known dependency chains:**
+
+| Format          | Depends On                |
+| --------------- | ------------------------- |
+| `date-time`     | `date`, `time`, `getTime` |
+| `iso-date-time` | `date`, `iso-time`        |
+| `time`          | `getTime`                 |
+
+---
+
+## Overwritten Formats
+
+If you've replaced a built-in format with a custom implementation, declare it in `overwrittenFormats` so @jetio/validator doesn't try to resolve its dependencies:
+
+```typescript
+const validator = new JetValidator({
+  overwrittenFormats: ["date"],
+});
+
+validator.addFormat("date", (str) => {
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(str); // DD/MM/YYYY
+});
+```
+
+Your custom format is inlined as-is, with no dependency resolution attempted.
+
+---
+
+## Variable Naming
+
+Format names often contain hyphens and other characters that are invalid in JavaScript identifiers. @jetio/validator sanitizes them automatically:
+
+```
+"json-pointer-uri-fragment"  →  format_json_pointer_uri_fragment
+"date-time"                  →  format_date_time
+"ipv4"                       →  format_ipv4
+```
+
+All non-alphanumeric characters are replaced with underscores, and a `format_` prefix is added. This applies consistently across variable declarations, the `formatValidators` object, and all references in the generated code.

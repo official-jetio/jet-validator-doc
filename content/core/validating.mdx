@@ -1,0 +1,294 @@
+---
+title: "Validating Data"
+description: "Compile and validate in one step with validate() and validateAsync(), and reuse compiled validators for performance."
+---
+
+# Validating Data
+
+## `validate(schema, data, config?)`
+
+Compile and validate data against a schema in a single synchronous operation.
+
+```typescript
+validate(
+  schema: object | boolean | string,
+  data: any,
+  config?: ValidatorOptions
+): ValidationResult
+```
+
+| Parameter | Type                          | Required | Description                                                 |
+| :-------- | :---------------------------- | :------- | :--------------------------------------------------------- |
+| `schema`  | `object \| boolean \| string` | Yes      | JSON Schema, boolean schema, or registered schema ID       |
+| `data`    | `any`                         | Yes      | The data to validate                                       |
+| `config`  | `ValidatorOptions`            | No       | Configuration overrides for this validation                |
+
+**Returns:** `ValidationResult` — `{ valid: boolean, errors: [] }`
+
+Internally calls `compile()`, runs the validator immediately, and returns the result synchronously. Use it for schemas without remote references or async keywords.
+
+### Basic validation
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    name:  { type: "string", minLength: 2 },
+    age:   { type: "number", minimum: 0 },
+    email: { type: "string", format: "email" },
+  },
+  required: ["name", "email"],
+};
+
+const result = jetValidator.validate(schema, {
+  name: "John Doe",
+  age: 30,
+  email: "john@example.com",
+});
+
+console.log(result.valid);  // true
+console.log(result.errors); // []
+```
+
+### Validation with errors
+
+```typescript
+const result = jetValidator.validate(
+  { type: "string", minLength: 5, format: "email" },
+  "a@b.c"
+);
+
+console.log(result.valid); // false
+console.log(result.errors);
+// [
+//   {
+//     dataPath: '/',
+//     schemaPath: '#/minLength',
+//     keyword: 'minLength',
+//     message: 'must NOT have fewer than 5 characters'
+//   }
+// ]
+```
+
+### Using a registered schema ID
+
+```typescript
+jetValidator.addSchema(
+  {
+    type: "object",
+    properties: {
+      username: { type: "string", pattern: "^[a-zA-Z0-9_]+$" },
+      password: { type: "string", minLength: 8 },
+    },
+    required: ["username", "password"],
+  },
+  "credentials"
+);
+
+const result = jetValidator.validate("credentials", {
+  username: "john_doe",
+  password: "securepass123",
+});
+
+console.log(result.valid); // true
+```
+
+### Configuration override
+
+```typescript
+const jetValidator = new JetValidator({ allErrors: true });
+
+const schema = {
+  type: "string",
+  minLength: 5,
+  maxLength: 10,
+  pattern: "^[A-Z]",
+};
+
+const result1 = jetValidator.validate(schema, "abc");
+console.log(result1.errors.length); // 2 (minLength + pattern)
+
+const result2 = jetValidator.validate(schema, "abc", { allErrors: false });
+console.log(result2.errors.length); // 1 (minLength — fail fast)
+```
+
+### Boolean schemas
+
+```typescript
+const result1 = jetValidator.validate(true, { anything: "goes" });
+console.log(result1.valid); // true
+
+const result2 = jetValidator.validate(false, { anything: "goes not" });
+console.log(result2.valid); // false
+console.log(result2.errors[0].message); // 'boolean schema is false'
+```
+
+---
+
+## `validateAsync(schema, data, config?)`
+
+Compile and validate data in a single asynchronous operation. Required for schemas with remote `$ref` references, async custom keywords, or async formats.
+
+```typescript
+async validateAsync(
+  schema: object | boolean | string,
+  data: any,
+  config?: ValidatorOptions
+): Promise<ValidationResult>
+```
+
+**Returns:** `Promise<ValidationResult>`. Internally calls `compileAsync()` and awaits validation.
+
+### Schema with remote references
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`Failed to load schema: ${uri}`);
+    return response.json();
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    user:     { $ref: "https://api.example.com/schemas/user.json" },
+    settings: { $ref: "https://api.example.com/schemas/settings.json" },
+  },
+  required: ["user"],
+};
+
+const result = await jetValidator.validateAsync(schema, {
+  user: { name: "John", email: "john@example.com" },
+  settings: { theme: "dark" },
+});
+
+console.log(result.valid); // true
+```
+
+### With an async custom keyword
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "uniqueUsername",
+  type: "string",
+  async: true,
+  validate: async (schemaValue, data) => {
+    if (!schemaValue) return true;
+    const exists = await database.checkUsernameExists(data);
+    return !exists;
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    username: { type: "string", minLength: 3, uniqueUsername: true },
+  },
+  required: ["username"],
+};
+
+const result = await jetValidator.validateAsync(schema, { username: "newuser" }, {async:true});
+console.log(result.valid); // true if username doesn't exist
+```
+
+### Error handling
+
+```typescript
+// Unregistered schema ID
+try {
+  const result = await jetValidator.validateAsync("non-existent", data);
+} catch (error) {
+  console.error("Schema not found:", error.message);
+}
+
+// Remote fetch failure
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+    return response.json();
+  },
+});
+
+try {
+  const result = await jetValidator.validateAsync(
+    { $ref: "https://example.com/invalid.json" },
+    data
+  );
+} catch (error) {
+  console.error("Validation failed:", error.message);
+}
+```
+
+---
+
+## Choosing a Method
+
+| Scenario                 | Method          | Reason                      |
+| :----------------------- | :-------------- | :-------------------------- |
+| Local schemas only       | `validate`      | Synchronous, faster         |
+| Remote `$ref` references | `validateAsync` | Must fetch external schemas |
+| Async custom keywords    | `validateAsync` | Keywords return promises    |
+| Async formats            | `validateAsync` | Format validators are async |
+
+| Use Case                         | Method                      | When to Use                 |
+| :------------------------------- | :-------------------------- | :-------------------------- |
+| Validate once                    | `validate()`                | Single validation operation |
+| Validate multiple times          | `compile()` then reuse      | Amortize compilation cost   |
+| Async validation once            | `validateAsync()`           | Single async validation     |
+| Async validation multiple times  | `compileAsync()` then reuse | Amortize async compilation  |
+
+For one-off validations, call `validate` directly. For repeated validations, compile once and reuse:
+
+```typescript
+// One-off
+app.post("/contact", (req, res) => {
+  const result = jetValidator.validate(contactSchema, req.body);
+  if (!result.valid) return res.status(400).json({ errors: result.errors });
+  // ...
+});
+
+// Repeated — compile once, reuse
+const validators = {
+  user:    jetValidator.compile(userSchema),
+  order:   jetValidator.compile(orderSchema),
+};
+
+app.post("/users", (req, res) => {
+  const result = validators.user(req.body);
+  if (!result) return res.status(400).json({ errors: validators.user.errors });
+  // ...
+});
+```
+
+---
+
+## Validate Methods Return a Result, Not a Function
+
+Unlike `compile`/`compileAsync` (which return the validator function with `errors` attached), the `validate`/`validateAsync` methods return a `ValidationResult` object directly:
+
+```typescript
+const result = jetValidator.validate({ type: "string" }, 1);
+console.log(result.valid);  // false
+console.log(result.errors); // errors are part of the result object
+```
+
+---
+
+## Reusing Compiled Validators for Performance
+
+Compiling once and reusing the validator is dramatically faster for high-frequency validation:
+
+```typescript
+const schema = { type: "string", minLength: 5 };
+const data = ["test1", "test2", "test3" /* ...1000 items */];
+
+// ❌ Re-compiles for each validation
+data.forEach((item) => jetValidator.validate(schema, item)); // ~1000ms
+
+// ✅ Compile once, reuse
+const validate = jetValidator.compile(schema);
+data.forEach((item) => validate(item)); // ~23ms — dramatically faster
+```

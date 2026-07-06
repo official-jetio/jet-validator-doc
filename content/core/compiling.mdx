@@ -1,0 +1,440 @@
+---
+title: "Compiling Schemas"
+description: "Compile JSON Schemas into optimized validation functions with compile() and compileAsync()."
+---
+
+# Compiling Schemas
+
+Methods that accept a `config: ValidatorOptions` parameter let you **override the instance-level configuration** per call — enabling `useDefaults` for one schema while disabling it for another, for example.
+
+Any instance-level option can be overridden at the method level **except `formats`**. Formats are loaded immediately when the instance is created, based on the initial config. Once the format registry has been populated (`"full"`, `"fast"`, or `false`), changing it per-method is ignored. This applies to all methods that accept config — `compile`, `compileAsync`, and so on.
+
+---
+
+## `compile(schema, config?)`
+
+Compile a JSON Schema into an optimized validation function.
+
+```typescript
+compile(schema: SchemaDefinition | boolean, config?: ValidatorOptions): ErrorAttachedValidatorFn
+```
+
+| Parameter | Type                          | Required | Description                                    |
+| --------- | ----------------------------- | -------- | ---------------------------------------------- |
+| `schema`  | `SchemaDefinition \| boolean` | Yes      | JSON Schema or boolean schema (`true`/`false`) |
+| `config`  | `ValidatorOptions`            | No       | Configuration overrides for this compilation   |
+
+**Returns:** `ErrorAttachedValidatorFn` — a compiled validation function with errors attached.
+
+**Behavior:**
+
+1. **Schema validation** — if `validateSchema` is enabled, validates the schema against the meta-schema
+2. **Cache check** — returns the cached validator if caching is on and the schema was compiled before
+3. **Compilation** — generates optimized JavaScript validation code
+4. **Caching** — stores the compiled validator (if enabled)
+5. **Returns** — a function that accepts data and returns `boolean`; errors are read from `validator.errors`
+
+The `errors` array is replaced on each call, so store errors if you need them across multiple validations.
+
+---
+
+### Basic compilation
+
+```typescript
+const jetValidator = new JetValidator();
+
+const validateString = jetValidator.compile({
+  type: "string",
+  minLength: 3,
+  maxLength: 50,
+});
+
+console.log(validateString("hello")); // true
+
+console.log(validateString("hi")); // false
+console.log(validateString.errors);
+// [{
+//     keyword: 'minLength',
+//     dataPath: '/',
+//     schemaPath: '#',
+//     expected: 'at least 3 characters',
+//     message: 'should NOT be shorter than 3 characters',
+//   }]
+```
+
+### Boolean schemas
+
+```typescript
+const alwaysValid = jetValidator.compile(true);
+console.log(alwaysValid("anything")); // true
+console.log(alwaysValid(123));        // true
+
+const alwaysInvalid = jetValidator.compile(false);
+console.log(alwaysInvalid("anything")); // false
+console.log(alwaysInvalid({}));         // false
+```
+
+### Complex object schema
+
+```typescript
+const userSchema = {
+  type: "object",
+  properties: {
+    id:    { type: "integer", minimum: 1 },
+    name:  { type: "string", minLength: 2, maxLength: 100 },
+    email: { type: "string", format: "email" },
+    age:   { type: "number", minimum: 0, maximum: 150 },
+    roles: {
+      type: "array",
+      items: { type: "string" },
+      minItems: 1,
+      uniqueItems: true,
+    },
+  },
+  required: ["id", "name", "email"],
+  additionalProperties: false,
+};
+
+const invalidUser = {
+  id: -1,              // below minimum
+  name: "J",           // too short
+  email: "invalid",    // invalid format
+  age: 200,            // above maximum
+  roles: [],           // too few items
+  extra: "not allowed", // additional property
+};
+
+const validate = jetValidator.compile(userSchema, { allErrors: true });
+console.log(validate(invalidUser));     // false
+console.log(validate.errors.length);    // 6 errors
+```
+
+### Schema with `$ref`
+
+```typescript
+const addressSchema = {
+  $id: "address",
+  type: "object",
+  properties: {
+    street:  { type: "string" },
+    city:    { type: "string" },
+    zipCode: { type: "string", pattern: "^[0-9]{5}$" },
+  },
+  required: ["street", "city", "zipCode"],
+};
+
+const personSchema = {
+  type: "object",
+  properties: {
+    name:        { type: "string" },
+    homeAddress: { $ref: "address" },
+    workAddress: { $ref: "address" },
+  },
+  required: ["name", "homeAddress"],
+};
+
+jetValidator.addSchema(addressSchema);
+const validatePerson = jetValidator.compile(personSchema);
+
+console.log(validatePerson({
+  name: "Jane Smith",
+  homeAddress: { street: "123 Main St", city: "Boston", zipCode: "02101" },
+  workAddress: { street: "456 Tech Blvd", city: "Cambridge", zipCode: "02138" },
+})); // true
+```
+
+### Compilation with schema validation
+
+When `validateSchema` is enabled, an invalid schema throws at compile time — it never returns a validator. This is deliberate: a broken schema must never be mistaken for invalid data.
+
+```typescript
+import { loadDraft07 } from "./meta-schemas/loader";
+
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+});
+loadDraft07(jetValidator);
+
+const invalidSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "invalid-type", // not a valid type
+};
+
+try {
+  const validate = jetValidator.compile(invalidSchema);
+} catch (errors) {
+  console.error(errors); // the validation errors array, thrown
+}
+```
+
+### Configuration override
+
+```typescript
+const jetValidator = new JetValidator({
+  allErrors: false,   // fail-fast by default
+  coerceTypes: false,
+  strict: true,
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    age:  { type: "number", minimum: 0 },
+    name: { type: "string", minLength: 2 },
+  },
+  required: ["age", "name"],
+};
+
+const validateStrict = jetValidator.compile(schema);
+const validateLenient = jetValidator.compile(schema, {
+  allErrors: true,
+  coerceTypes: true,
+  useDefaults: true,
+});
+
+const data = { age: "25", name: "J" };
+
+console.log(validateStrict(data));           // false
+console.log(validateStrict.errors.length);   // 1 (fails on first error)
+
+console.log(validateLenient(data));          // false
+console.log(validateLenient.errors.length);  // 2 (all errors; age coerced to 25)
+```
+
+### Caching
+
+```typescript
+const jetValidator = new JetValidator({ cache: true });
+
+const schema = { type: "string", pattern: "^[A-Z]+$" };
+
+const validate1 = jetValidator.compile(schema);
+const validate2 = jetValidator.compile(schema); // cache hit
+console.log(validate1 === validate2); // true — same function instance
+
+const jetValidator2 = new JetValidator({ cache: false });
+const v1 = jetValidator2.compile(schema);
+const v2 = jetValidator2.compile(schema);
+console.log(v1 === v2); // false — re-compiled
+```
+
+### Meta-schema override during compilation
+
+```typescript
+const schema2020 = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: { name: { type: "string" } },
+};
+
+// Auto-detects Draft 2020-12 from $schema
+const validate1 = jetValidator.compile(schema2020);
+
+// Override to validate against Draft-07 instead
+const validate2 = jetValidator.compile(schema2020, { metaSchema: "draft-07" });
+
+// Skip schema validation for this compilation
+const validate3 = jetValidator.compile(schema2020, { validateSchema: false });
+```
+
+---
+
+### Compile once, reuse
+
+Never compile inside a loop — compile once and reuse the validator:
+
+```typescript
+// ❌ Compiles 1000 times
+data.forEach((item) => {
+  const validate = jetValidator.compile(schema);
+  validate(item);
+});
+
+// ✅ Compile once
+const validate = jetValidator.compile(schema);
+data.forEach((item) => validate(item));
+```
+
+| Use Case                                | Recommendation           |
+| --------------------------------------- | ------------------------ |
+| Validation in hot paths (loops, APIs)   | ✅ Compile once, reuse   |
+| One-time validation                     | Use `validate()` instead |
+| Schema changes dynamically              | Compile each time        |
+| Multiple validations of same data shape | ✅ Compile and cache     |
+| Remote `$ref`                          | Use `compileAsync()`     |
+
+---
+
+## `compileAsync(schema, config?)`
+
+Asynchronously compile a schema with remote references or async keywords.
+
+```typescript
+compileAsync(schema: SchemaDefinition | boolean, config?: ValidatorOptions): Promise<ErrorAttachedValidatorFn>
+```
+
+**Behavior:** same as `compile`, plus it resolves remote `$ref` references using the `loadSchema` function before compiling.
+
+### Schema with remote references
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${uri}`);
+    return response.json();
+  },
+  addUsedSchema: true, // auto-register fetched schemas
+});
+
+const orderSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  properties: {
+    orderId:  { type: "string" },
+    customer: { $ref: "https://api.example.com/schemas/customer.json" },
+    items: {
+      type: "array",
+      items: { $ref: "https://api.example.com/schemas/product.json" },
+    },
+  },
+  required: ["orderId", "customer", "items"],
+};
+
+const validateOrder = await jetValidator.compileAsync(orderSchema);
+// Fetches customer.json and product.json, then compiles
+
+const result = await validateOrder({
+  orderId: "ORD-12345",
+  customer: { id: "CUST-001", name: "John Doe", email: "john@example.com" },
+  items: [{ id: "PROD-001", name: "Widget", price: 19.99 }],
+});
+console.log(result); // true
+```
+
+Remote references are resolved recursively — if a fetched schema references another remote schema, that one is fetched too. Local references (registered via `addSchema`) are used directly without fetching, so a schema can freely mix local and remote `$ref`.
+
+### Error handling
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`Failed to fetch ${uri}: ${response.status}`);
+    return response.json();
+  },
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    user: { $ref: "https://api.example.com/schemas/user.json" },
+  },
+};
+
+try {
+  const validate = await jetValidator.compileAsync(schema);
+} catch (error) {
+  console.error("Compilation failed:", error.message);
+  // Network failures, invalid remote schema, or circular references
+}
+```
+
+### Caching with async
+
+```typescript
+const schema = {
+  type: "object",
+  properties: { data: { $ref: "https://api.example.com/schemas/data.json" } },
+};
+
+const validate1 = await jetValidator.compileAsync(schema); // fetches + compiles
+const validate2 = await jetValidator.compileAsync(schema); // cache hit, no network
+console.log(validate1 === validate2); // true
+```
+
+| Scenario                  | Use Async?            |
+| :------------------------ | :-------------------- |
+| Schema has remote `$ref`  | ✅ Required           |
+| All references are local  | ❌ Use `compile()`    |
+| Performance critical path | ❌ Compile at startup |
+
+---
+
+## Sync vs Async Compilation and Async Validation
+
+Async **validation** (async keywords/formats) works regardless of whether you used `compile` or `compileAsync`. `compileAsync` is about resolving remote `$ref` at compile time; async validation is about the returned function awaiting async keywords. Enable async validation via the `async` option:
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+jetValidator.compile(schema);
+jetValidator.compileAsync(schema);
+
+// or per-call for granular control
+jetValidator.compile(schema, { async: true });
+jetValidator.compileAsync(schema, { async: true });
+```
+
+---
+
+## Errors Are Attached to the Function
+
+`compile` and `compileAsync` return a function that returns a boolean; the errors live on the function and are replaced on each call:
+
+```typescript
+const validate = jetValidator.compile({ type: "string", minLength: 5 });
+
+console.log(validate(1));         // false
+console.log(validate.errors);     // errors attached to the function
+
+console.log(validate("hi"));      // false — minLength not met (previous errors replaced)
+console.log(validate.errors);     // new errors
+```
+
+---
+
+## Best Practices for Async Compilation
+
+**Compile at startup** — resolve remote schemas once during initialization, then use the validators synchronously:
+
+```typescript
+const setupValidators = async () => {
+  const validateUser = await jetValidator.compileAsync(userSchema);
+  const validateOrder = await jetValidator.compileAsync(orderSchema);
+  return { validateUser, validateOrder };
+};
+
+const validators = await setupValidators();
+
+app.post("/users", async (req, res) => {
+  const result = await validators.validateUser(req.body);
+  // ...
+});
+```
+
+**Retry on transient fetch failures:**
+
+```typescript
+const compileWithRetry = async (schema, retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await jetValidator.compileAsync(schema);
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
+    }
+  }
+};
+```
+
+**Guard against hanging fetches with a timeout:**
+
+```typescript
+const compileWithTimeout = async (schema, timeoutMs = 10000) => {
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error("Compilation timeout")), timeoutMs);
+  });
+  return Promise.race([jetValidator.compileAsync(schema), timeoutPromise]);
+};
+```

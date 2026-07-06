@@ -1,0 +1,284 @@
+---
+title: "Resolution Rules"
+description: "The unified error message resolution model: the three lookup levels, the one-level-down rule, and the form rules for each keyword family."
+---
+
+# Resolution Rules
+
+This is the core page for understanding how custom error messages resolve. Everything else follows from these rules.
+
+> **v2 note:** In v2 the resolution model is fully unified. There are no boundary keywords with special behavior anymore — `anyOf`, `then`, `else`, `properties`, etc. all resolve the same way. The old "alt path" concept no longer exists.
+
+---
+
+## The Three Lookup Levels
+
+When a keyword fails, @jetio/validator looks for its custom message in three places, in order. First match wins:
+
+1. **Current level** — `errorMessage` on the schema the keyword lives in
+2. **Parent level** — `errorMessage` on the immediate parent
+3. **Root level** — `errorMessage` at the root of the schema
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    age: {
+      type: "number",
+      minimum: 0,
+      errorMessage: {
+        minimum: "Age can't be negative", // 1. current level — wins for minimum
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      age: {
+        type: "Age must be a number", // 2. parent level — used for age's type
+      },
+    },
+  },
+};
+```
+
+Here a `minimum` failure resolves at the current level, while a `type` failure on `age` isn't defined at the current level so it falls through to the parent.
+
+---
+
+## The One-Level-Down Rule
+
+At a **non-root** level, an `errorMessage` can only reach **one level down** from where it's defined.
+
+A keyword looks for its message in its own schema and its immediate parent — nowhere higher. So an `errorMessage` at some level can define messages for that level and one level below, but not two.
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    b: {
+      properties: {
+        c: { properties: { a: { type: "string" } } },
+      },
+      errorMessage: {
+        properties: {
+          c: {
+            // ✅ c is one level down from b's errorMessage
+            properties: {
+              a: "won't work", // ❌ a is two levels down — never resolves here
+            },
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+`c` resolves because it's one level down from where the `errorMessage` lives (on `b`). But `a` is two levels down — and `a` only looks in its own schema and its immediate parent (`c`), never up at `b`. To message `a`, define it on `c` directly, or from root.
+
+---
+
+## Root Level: Follow the Path as Deep as You Want
+
+The one-level-down limit only applies to non-root levels. **At the root you can follow the full path to any depth.**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    b: {
+      properties: {
+        c: { properties: { a: { type: "string" } } },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      b: {
+        properties: {
+          c: {
+            properties: {
+              a: "resolves from root — any depth is fine", // ✅
+            },
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+This gives you two clean authoring styles: **local** (define messages next to what they apply to, one level down) or **centralized** (put everything at root and follow the full path).
+
+---
+
+## The Form Rules: String vs Structured
+
+Whether a keyword accepts a plain string message or requires structured (keyed/indexed) form depends on how the keyword is accessed.
+
+### Index / Key-Accessed Keywords — No General String
+
+These keywords navigate to sub-schemas by **property name or array index**. They require the keyed/indexed form. A general string does **not** work, because the keyword itself carries no rule — it's pure navigation, so a bare string has no keyword to attach to.
+
+Keywords: `properties`, `patternProperties`, `dependentSchemas`, `dependencies` (schema form), `anyOf`, `oneOf`, `allOf`, `prefixItems` and `items (draft07)`
+
+```typescript
+// ❌ general string — won't work, these are navigation keywords
+errorMessage: { properties: "error" }
+errorMessage: { anyOf: "error" }
+errorMessage: { prefixItems: "error" }
+
+// ✅ keyed form (by property name)
+errorMessage: { properties: { email: "Invalid email" } }
+
+// ✅ indexed form (by array index)
+errorMessage: { anyOf: { 0: "First branch failed" } }
+errorMessage: { anyOf: ["First branch failed", "Second branch failed"] }
+```
+
+### Schema-Accepting Keywords — General String Allowed
+
+These keywords map to a **single sub-schema**, not an indexed collection. They can take a general string, or drill in with an object:
+
+Keywords: `then`, `else`, `not`, `additionalProperties`, `unevaluatedProperties`, `additionalItems`, `unevaluatedItems`, `items` (single-schema form draft 2019+), `propertyNames`, `required`
+
+```typescript
+// ✅ general string
+errorMessage: { then: "Conditional requirement failed" }
+
+// ✅ drill in
+errorMessage: {
+  then: {
+    _jetError: "Conditional requirement failed",
+    properties: { companyName: "Company name required" },
+  },
+}
+```
+
+### Validation-Keyword Mappings — String or Per-Key
+
+Some mapping keywords carry an actual **rule** and produce errors under their own keyword name — so they behave like normal validation keywords. They accept a general string, or per-key targeting:
+
+Keywords: `dependentRequired`, `dependencies` (array form)
+
+```typescript
+// ✅ Form 1 — whole-keyword general string (applies to every failure)
+errorMessage: { dependentRequired: "A required dependency is missing" }
+
+// ✅ Form 2 — per-key string (one message per triggering property)
+errorMessage: {
+  dependentRequired: {
+    creditCard: "CVV and billing address required for credit card payments",
+  },
+}
+
+// ✅ Form 3 — per-key, per-dependency (target individual missing fields)
+errorMessage: {
+  dependentRequired: {
+    creditCard: {
+      cvv:            "CVV is required",
+      billingAddress: "Billing address is required",
+    },
+  },
+}
+```
+
+### `required` — General String Only
+
+`required` is a special case. Because of how it compiles (the field loop runs at runtime, or short-circuits in fail-fast mode), individual field names aren't known at compile time — so there's nothing to attach per-field messages to. `required` accepts **only a single general string**:
+
+```typescript
+// ✅
+errorMessage: { required: "All required fields must be present" }
+
+// ❌ per-field form — can't be resolved
+errorMessage: { required: { email: "...", name: "..." } }
+```
+
+---
+
+## `_jetError` — The Fallback
+
+`_jetError` is a catch-all for all **non-straying validation keywords** at a given level — keywords like `type`, `minProperties`, `minLength`, `pattern`, etc. that don't navigate elsewhere.
+
+It's useful when a level has both navigation keywords (which need explicit targeting) and plain validation keywords (which you'd rather cover in bulk):
+
+```typescript
+const schema = {
+  type: "object",
+  minProperties: 1,
+  properties: {
+    name: { type: "string", minLength: 2 },
+  },
+  errorMessage: {
+    _jetError: "Object validation failed", // covers type, minProperties
+    properties: {
+      name: "Invalid name", // navigation — explicit
+    },
+  },
+};
+```
+
+Explicit keyword definitions always take priority over `_jetError`.
+
+You only need `_jetError` when there are navigation keywords at the same level or you want custom messages for some particular keywords. If a level has only plain validation keywords and they can also share a general message, a schema-level string covers everything:
+
+```typescript
+const schema = {
+  type: "string",
+  format: "email",
+  minLength: 5,
+  errorMessage: "Invalid email", // covers type, format, minLength — no _jetError needed
+};
+```
+
+---
+
+## Example
+
+Putting it together. The `errorMessage` here is defined on an `anyOf` branch (its own level):
+
+```typescript
+const schema = {
+  anyOf: [
+    {
+      type: "object",
+      if: { properties: { type: { const: "business" } } },
+      then: {
+        type: "string",
+        required: ["companyName"],
+        properties: {
+          c: { type: "null" },
+        },
+      },
+      anyOf: [{ type: "null" }],
+      properties: {
+        name: { type: "string" },
+      },
+      errorMessage: {
+        _jetError: "Branch validation failed", // fallback for plain keywords on this branch type, minLength etc
+        then: {
+          // then resolves from parent (one level down)
+          _jetError: "Business rule failed", // covers then's type + required
+          properties: {
+            c: "Field c must be null", // c targeted, one level down
+          },
+        },
+        anyOf: ["Inner anyOf branch 0 failed"], // indexed form for this branch's own anyOf
+        properties: {
+          name: {
+            _jetError: "Name validation failed",
+          },
+        },
+      },
+    },
+  ],
+};
+```
+
+How each part resolves:
+
+- `_jetError` — plain keyword failures directly on the branch
+- `then` — resolves from the parent branch, one level down; `then` is schema-accepting so it takes a drill-in object; inside, `_jetError` covers `then`'s `type`/`required`, and `properties.c` targets `c`
+- `anyOf: [...]` — the branch's own nested `anyOf`, indexed form (a general string would not work — `anyOf` is index-accessed)
+- `properties.name` — `name` targeted one level down, with its own `_jetError`

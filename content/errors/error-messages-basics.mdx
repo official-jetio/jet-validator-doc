@@ -1,0 +1,228 @@
+---
+title: "Custom Error Messages"
+description: "Schema-level and parent-level custom error messages, the three lookup levels, and error format."
+---
+
+# Custom Error Messages
+
+@jetio/validator has built-in support for custom error messages with no plugins required. It supports schema-level, parent-level, and root-level customization through a single, consistent resolution model.
+
+> **Upgrading from v1?** Error message resolution changed in 2.0. In v1, boundary and straying keywords refused to read a parent-level message — only messages defined inside the keyword or at the root resolved. 2.0 unifies this so every keyword also checks its parent level. Messages defined inside keywords or at the root behave identically; a parent-level message that was inert in v1 now activates. See [Upgrading to 2.0](/whats-new-2#error-messages-resolve-at-the-parent-level) for details.
+
+---
+
+## Errors in Referenced Schemas
+
+For schemas referenced via `$ref` or `$dynamicRef`, error messages must be defined **inside the referenced schema itself** — not in the referencing schema. This applies to both local and external references.
+
+JetValidator returns the full schema path when an error occurs inside a referenced schema:
+
+```typescript
+const error = {
+  schemaPath:
+    "#/$ref/https://json-schema.org/draft/2020-12/schema/allOf/0/$ref/https://json-schema.org/draft/2020-12/meta/core",
+};
+```
+
+Path breakdown:
+
+- `#/` — root schema passed to the validator
+- `$ref/https://json-schema.org/draft/2020-12/schema/` — external schema reference
+- `allOf/0/` — first sub-schema in `allOf`
+- `$ref/https://json-schema.org/draft/2020-12/meta/core` — another external reference
+
+---
+
+## The Three Lookup Levels
+
+Every keyword that fails looks for its custom error message in three places, in order:
+
+1. **Current level** — an `errorMessage` on the schema the keyword lives in
+2. **Parent level** — an `errorMessage` on the immediate parent schema
+3. **Root level** — an `errorMessage` at the root of the schema
+
+The first match wins. If none is found, the default message is used.
+
+This is covered in full on the [Resolution Rules](/errors/error-messages-resolution) page — start there once you understand the basics below.
+
+---
+
+## Schema-Level Error Messages
+
+The simplest form: define `errorMessage` directly on the schema being validated (the current level).
+
+### String Form
+
+A single string overrides all validation errors at that schema level:
+
+```typescript
+const schema = {
+  type: "string",
+  minLength: 5,
+  maxLength: 20,
+  pattern: "^[a-z]+$",
+  errorMessage: "Username must be 5-20 lowercase letters",
+};
+
+// ANY validation failure returns: "Username must be 5-20 lowercase letters"
+```
+
+### Object Form
+
+Customize messages per keyword:
+
+```typescript
+const schema = {
+  type: "string",
+  minLength: 5,
+  maxLength: 20,
+  pattern: "^[a-z]+$",
+  errorMessage: {
+    type: "Must be text",
+    minLength: "Too short - need at least 5 characters",
+    maxLength: "Too long - maximum 20 characters",
+    pattern: "Only lowercase letters allowed",
+  },
+};
+```
+
+If a keyword fails and has no entry in the object, resolution continues to the parent level, then root.
+
+---
+
+## Parent-Level Error Messages
+
+Define error messages on a parent schema for its children. This is the most common pattern for objects and arrays.
+
+### For Object Properties
+
+**Per-property string:**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email", minLength: 5 },
+  },
+  errorMessage: {
+    properties: {
+      email: "Invalid email address",
+    },
+  },
+};
+```
+
+**Per-property, per-keyword:**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string", format: "email", minLength: 5 },
+  },
+  errorMessage: {
+    properties: {
+      email: {
+        type: "Email must be a string",
+        format: "Email format is invalid",
+        minLength: "Email too short",
+      },
+    },
+  },
+};
+```
+
+### For Array Items
+
+```typescript
+const schema = {
+  type: "array",
+  items: { type: "number", minimum: 0, maximum: 100 },
+  errorMessage: {
+    items: "Item validation failed",
+  },
+};
+
+// Per-keyword:
+const schemaDetailed = {
+  type: "array",
+  items: { type: "number", minimum: 0, maximum: 100 },
+  errorMessage: {
+    items: {
+      type: "Must be a number",
+      minimum: "Cannot be negative",
+      maximum: "Cannot exceed 100",
+    },
+  },
+};
+```
+
+---
+
+## Messages Must Be Strings
+
+A resolved error message must be a **string**. The system uses "is this an object?" as the signal for whether to keep navigating deeper into the `errorMessage` structure or treat the value as the final message. An object at a leaf position would be ambiguous — the resolver can't tell "keep drilling in" from "this is the message."
+
+```typescript
+// ❌ object as a message leaf — ambiguous, won't behave as a message
+errorMessage: {
+  properties: {
+    email: { some: "object" },  // treated as navigation, not a message
+  },
+}
+
+// ✅ string leaf
+errorMessage: {
+  properties: {
+    email: "Invalid email",
+  },
+}
+```
+
+If you need structured data in a message, stringify it yourself and parse it on the receiving end.
+
+---
+
+## Error Format
+
+Validation errors follow this structure:
+
+```typescript
+interface ValidationError {
+  dataPath: string; // path to the invalid data (e.g. "/user/email")
+  schemaPath: string; // path in schema
+  keyword: string; // keyword that failed
+  value: unknown; // the value that was validated
+  expected?: string; // expected value/type
+  message: string; // error message (custom or default)
+}
+```
+
+**Example:**
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: {
+      type: "string",
+      format: "email",
+      errorMessage: "Please enter a valid email address",
+    },
+  },
+  required: ["email"],
+};
+
+const validate = jetValidator.compile(schema);
+validate({ email: "not-an-email" });
+
+console.log(validate.errors);
+// [{
+//   dataPath: '/email',
+//   schemaPath: '#/properties/email/format',
+//   keyword: 'format',
+//   value: 'not-an-email',
+//   expected: 'valid email',
+//   message: 'Please enter a valid email address'
+// }]
+```

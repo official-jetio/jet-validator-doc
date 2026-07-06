@@ -3,11 +3,11 @@ title: "Format Validation"
 description: "Built-in formats, custom formats, async format validation, and format management."
 ---
 
-# JetValidator Format Validation
+# @jetio/validator Format Validation
 
 ## Overview
 
-Format validation in JetValidator allows you to validate string values (and other types) against predefined or custom patterns. The validator supports:
+Format validation in @jetio/validator allows you to validate string values (and other types) against predefined or custom patterns. The validator supports:
 
 - **Built-in formats** (email, URL, UUID, date-time, etc.)
 - **Custom formats** with multiple definition styles
@@ -21,10 +21,10 @@ Format validation in JetValidator allows you to validate string values (and othe
 
 ### Instance-Level Configuration
 
-Format behavior is configured when creating a JetValidator instance:
+Format behavior is configured when creating a @jetio/validator instance:
 
 ```typescript
-import { JetValidator } from "jetvalidator";
+import { JetValidator } from "@jetio/validator";
 
 const jetValidator = new JetValidator({
   formatMode: "full", // 'full', 'fast', or false
@@ -565,7 +565,10 @@ const isValid = jetValidator.testFormat("test@example.com", "email");
 console.log(isValid); // true
 
 // For async formats
-const isUnique = await jetValidator.testFormat("new@example.com", "unique-email");
+const isUnique = await jetValidator.testFormat(
+  "new@example.com",
+  "unique-email",
+);
 ```
 
 #### Validate Format
@@ -826,7 +829,7 @@ jetValidator.addFormat("username", {
     }
     if (!/^[a-zA-Z0-9_]+$/.test(value)) {
       throw new Error(
-        "Username can only contain letters, numbers, and underscores"
+        "Username can only contain letters, numbers, and underscores",
       );
     }
     return true;

@@ -1,0 +1,251 @@
+---
+title: "Keyword Inlining"
+description: "How each custom keyword type is serialized and inlined in standalone generation."
+---
+
+# Keyword Inlining
+
+How a custom keyword gets inlined into standalone output depends on its type. Each of the four keyword types has different serialization characteristics.
+
+---
+
+## `code` Keywords — Direct Injection
+
+The simplest case. The string returned by your `code` function is injected directly into the validation function with no transformation.
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "isEven",
+  type: "number",
+  code: (schema, _, context) => {
+    return `
+      if (${context.dataVar} % 2 !== 0) {
+        ${context.buildError({ message: '"Number must be even"' })}
+      }
+    `;
+  },
+});
+```
+
+The generated code appears inline at the point of validation, no wrapping, no function call overhead.
+
+---
+
+## `validate` Keywords — Serialized via `toString()`
+
+The validate function is serialized using `.toString()` and included directly in the generated output.
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "uniqueInParent",
+  schemaType: "boolean",
+  validate: (schemaValue, data, parentSchema, dataContext) => {
+    if (!schemaValue) return true;
+    const { parentData } = dataContext;
+    if (!Array.isArray(parentData)) return true;
+    const occurrences = parentData.filter((item) => item === data).length;
+    if (occurrences > 1) {
+      return { message: `Value '${data}' must be unique in array` };
+    }
+    return true;
+  },
+});
+```
+
+**Generated standalone output:**
+
+```javascript
+const uniqueInParent = (schemaValue, data, parentSchema, dataContext) => {
+  if (!schemaValue) return true;
+  const { parentData } = dataContext;
+  if (!Array.isArray(parentData)) return true;
+  const occurrences = parentData.filter((item) => item === data).length;
+  if (occurrences > 1) {
+    return { message: `Value '${data}' must be unique in array` };
+  }
+  return true;
+};
+```
+
+**Important:** The function must be self-contained. Any external imports it relies on must be provided separately.
+
+---
+
+## `compile` Keywords — The `...args` Pattern
+
+`compile` is a factory function. It returns another function. Only the **returned function** is inlined, not the factory itself. This creates a challenge: compilation context (schemaValue, parentSchema, etc.) exists at compile time but needs to be available at validation time.
+
+**Solution:** Use rest parameters (`...args`) to capture compilation context in a closure that gets serialized with the returned function.
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "maxScore",
+  type: "number",
+  schemaType: "number",
+  compile: (...args) => {
+    // args[0] = schemaValue
+    // args[1] = parentSchema
+    // args[2] = context (schemaPath, rootSchema, opts)
+
+    return (data, rootData, dataPath) => {
+      const maxValue = args[0]; // captured via ...args
+      if (data > maxValue) {
+        return { message: `Score must not exceed ${maxValue}` };
+      }
+      return true;
+    };
+  },
+});
+```
+
+**Generated standalone output:**
+
+```javascript
+const compilerOptions = { "formatMode": "full", "$data": false, ... };
+const mainRootSchema  = { "type": "object", "properties": { ... } };
+
+function validate(rootData) {
+  // ...
+
+  if (var0["score"] !== undefined) {
+    const var1 = var0["score"];
+    if (typeof var1 !== "number") {
+      validate.errors = [{...}];
+      return false;
+    }
+
+    const maxScore_1 = (...args) => (data, rootData, dataPath) => {
+      const maxValue = args[0];
+      if (data > maxValue) {
+        return { message: `Score must not exceed ${maxValue}` };
+      }
+      return true;
+    };
+
+    const maxScore_1Result = maxScore_1(
+      100,
+      { type: "number", maxScore: 100 },
+      {
+        schemaPath: "#/properties/score",
+        rootSchema: mainRootSchema,
+        opts: compilerOptions
+      }
+    )(var1, rootData, "/score");
+
+    if (maxScore_1Result !== true && typeof maxScore_1Result === "object") {
+      validate.errors = [{
+        dataPath: "/score",
+        schemaPath: "#/properties/score",
+        keyword: "maxScore",
+        message: maxScore_1Result.message || "Failed validation for keyword 'maxScore'"
+      }];
+      return false;
+    }
+  }
+
+  return true;
+}
+```
+
+### What Works and What Doesn't
+
+**✅ Works — value captured via `args[0]`:**
+
+```typescript
+compile: (...args) => {
+  return (data) => data > args[0];
+};
+```
+
+**❌ Fails — value extracted before closure:**
+
+```typescript
+compile: (...args) => {
+  const threshold = args[0]; // not captured in the returned function's closure
+  return (data) => data > threshold;
+};
+```
+
+**❌ Fails — external import:**
+
+```typescript
+import { checkLimit } from './utils';
+
+compile: (...args) => {
+  return (data) => checkLimit(data, args[0]);  // checkLimit not available at runtime
+}
+**Solution:** Provide external dependencies as imports in your standalone deployment.
+
+```
+
+**❌ Fails — destructured from named params:**
+
+```typescript
+compile: (condition, parentSchema, context) => {
+  const { field, value } = condition;  // not accessible via ...args
+  return (data, rootData) => {
+    if (rootData[field] === value) { ... }  // field doesn't exist at runtime
+  };
+}
+```
+
+---
+
+## `macro` Keywords — Always Inlineable
+
+Macro keywords transform the schema **before** code generation begins. The transformed schema contains only standard JSON Schema keywords, which are compiled normally.
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "range",
+  macro: (schemaValue) => ({
+    minimum: schemaValue.min,
+    maximum: schemaValue.max,
+  }),
+});
+
+// { type: "number", range: { min: 0, max: 100 } }
+// →  { type: "number", minimum: 0, maximum: 100 }
+```
+
+The generated code validates `minimum` and `maximum` — there's no `range` keyword in the output at all. Macros are always standalone-compatible because they produce standard structures.
+
+---
+
+## External Dependencies
+
+If your keyword function relies on an external import, you need to prepend it to the generated code manually. @jetio/validator leaves this to you for maximum flexibility.
+
+```typescript
+const validator = new JetValidator({ formats: ["email"], $data: true });
+
+validator.addFormat("email", {
+  validate: (data: string) => {
+    const valid = checkEmail(data); // external dependency
+    if (!valid) return { message: "Invalid email" };
+    return true;
+  },
+});
+
+const result = validator.generateStandalone(schema, {});
+
+// Option 1: prepend require/import
+const finalCode = `import { checkEmail } from './email';\n` + result.code;
+
+// Option 2: inline the function
+const finalCode = checkEmail.toString() + "\n" + result.code;
+```
+
+Adding external depencies is as simple as that, just ensure the imports are correct or the inline function doesn't have any dependencies as well or just add them.
+
+---
+
+## Best Practices
+
+1. **Use a dedicated instance** for standalone generation with its own configuration.
+2. **Always specify `formats`** when using `$data` to avoid bloating the output.
+3. **Specify `overwrittenFormats`** if you've replaced any built-in formats.
+4. **Use `...args`** in `compile` keywords — it's the only way to capture compilation context in standalone output.
+5. **Keep keyword functions self-contained** — document any external dependencies they need.
+6. **Prefer `code` keywords** for the most direct inlining with zero overhead.
+7. **Macros need no special handling** — they produce standard schema structures and are always standalone-compatible.

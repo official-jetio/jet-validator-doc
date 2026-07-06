@@ -1,0 +1,168 @@
+---
+title: "The Priority System"
+description: "How @jetio/validator picks which meta-schema to validate against: method override, the $schema keyword, and the instance default."
+---
+
+# The Three-Tier Priority System
+
+@jetio/validator uses a three-tier priority system to determine which meta-schema to use when validating schemas. This provides flexibility while maintaining sensible defaults.
+
+```
+┌─────────────────────────────────────────┐
+│  PRIORITY 1 (HIGHEST)                    │
+│  Method-Level Override                   │
+│  validateSchema(schema, { metaSchema })  │
+└─────────────────────────────────────────┘
+              ↓ (if not specified)
+┌─────────────────────────────────────────┐
+│  PRIORITY 2 (MEDIUM)                     │
+│  Schema's $schema Keyword                │
+│  { $schema: "draft-07" }                 │
+└─────────────────────────────────────────┘
+              ↓ (if not specified)
+┌─────────────────────────────────────────┐
+│  PRIORITY 3 (LOWEST)                     │
+│  Instance Default                        │
+│  new JetValidator({ metaSchema: "..." }) │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## Priority 1: Method-Level Override
+
+Explicitly specify the meta-schema when calling a validation method. Useful for testing cross-draft compatibility, debugging, or temporarily overriding a schema's declared version.
+
+```typescript
+const schema = {
+  $schema: "https://json-schema.org/draft-07/schema", // schema says Draft-07
+  type: "string",
+};
+
+// Validate against Draft 2020-12 instead
+const isValid = jetValidator.validateSchema(schema, {
+  metaSchema: "draft/2020-12", // Priority 1 overrides Priority 2
+});
+```
+
+Testing a schema across every draft:
+
+```typescript
+const drafts = ["draft-06", "draft-07", "draft/2019-09", "draft/2020-12"];
+
+drafts.forEach((draft) => {
+  const isValid = jetValidator.validateSchema(mySchema, { metaSchema: draft });
+  console.log(`${draft}: ${isValid ? "✓ Compatible" : "✗ Incompatible"}`);
+});
+```
+
+---
+
+## Priority 2: The Schema's `$schema` Keyword
+
+Auto-detect the meta-schema from the schema's `$schema` property. This is the normal path for self-documenting schemas.
+
+```typescript
+const draft07Schema = {
+  $schema: "https://json-schema.org/draft-07/schema", // auto-detected
+  type: "string",
+};
+
+const draft2020Schema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema", // auto-detected
+  type: "string",
+};
+
+jetValidator.validateSchema(draft07Schema); // uses Draft-07
+jetValidator.validateSchema(draft2020Schema); // uses Draft 2020-12
+```
+
+Different drafts can coexist in the same application — each schema validates against its own declared version:
+
+```typescript
+const legacyUserSchema = {
+  $schema: "https://json-schema.org/draft-06/schema",
+  type: "object",
+  properties: { name: { type: "string" } },
+};
+
+const modernUserSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: { name: { type: "string" } },
+  unevaluatedProperties: false, // 2020-12 keyword
+};
+
+jetValidator.validateSchema(legacyUserSchema); // Draft-06
+jetValidator.validateSchema(modernUserSchema); // 2020-12
+```
+
+---
+
+## Priority 3: Instance Default
+
+Fallback to the default meta-schema from the constructor. Used for schemas without a `$schema` keyword, or to enforce a project-wide standard.
+
+```typescript
+const jetValidator = new JetValidator({
+  metaSchema: "draft-07", // instance default
+});
+
+loadDraft07(jetValidator);
+
+const schema = {
+  type: "string", // no $schema keyword
+  minLength: 5,
+};
+
+jetValidator.validateSchema(schema); // falls back to Draft-07
+```
+
+Separate instances can hold different defaults — one for legacy schemas, one for modern:
+
+```typescript
+const legacyValidator = new JetValidator({ metaSchema: "draft-06" });
+loadDraft06(legacyValidator);
+
+const modernValidator = new JetValidator({ metaSchema: "draft/2020-12" });
+loadDraft202012(modernValidator);
+
+legacyValidator.validateSchema(oldSchema);
+modernValidator.validateSchema(newSchema);
+```
+
+---
+
+## All Three Together
+
+```typescript
+const jetValidator = new JetValidator({
+  metaSchema: "draft-06", // PRIORITY 3: instance default
+});
+
+loadAllMetaSchemas(jetValidator);
+
+const noSchemaKeyword = { type: "string" };
+const draft07Schema = {
+  $schema: "https://json-schema.org/draft-07/schema", // PRIORITY 2
+  type: "string",
+};
+
+// No $schema, no override → Priority 3 (draft-06)
+jetValidator.validateSchema(noSchemaKeyword);
+
+// Has $schema, no override → Priority 2 (draft-07)
+jetValidator.validateSchema(draft07Schema);
+
+// Has $schema, with override → Priority 1 wins (draft-06)
+jetValidator.validateSchema(draft07Schema, {
+  metaSchema: "draft-06",
+});
+```
+
+| Schema `$schema` | Method Override | Result                          |
+| ---------------- | --------------- | ------------------------------- |
+| Not specified    | Not specified   | Instance default                |
+| `draft-07`       | Not specified   | `draft-07` (from schema)        |
+| `draft-07`       | `draft/2020-12` | `draft/2020-12` (override wins) |
+| Not specified    | `draft/2020-12` | `draft/2020-12` (override wins) |

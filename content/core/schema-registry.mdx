@@ -1,0 +1,521 @@
+---
+title: "Schema Registry"
+description: "Register, retrieve, compile, remove, and query schemas in the JetValidator internal registry."
+---
+
+# Schema Registry
+
+Register schemas once and reference them by ID throughout your application.
+
+---
+
+## Adding Schemas
+
+### `addSchema(schema, id?)`
+
+Register a schema in the internal registry for reuse.
+
+```typescript
+addSchema(schema: SchemaDefinition, id?: string): void
+```
+
+| Parameter | Type               | Required | Description                                            |
+| --------- | ------------------ | -------- | ----------------------------------------------------- |
+| `schema`  | `SchemaDefinition` | Yes      | The JSON Schema object to register                    |
+| `id`      | `string`           | No       | Unique identifier. If omitted, uses `schema.$id`      |
+
+**Throws:** if neither `id` nor `schema.$id` || `schema.id` is provided.
+
+**Behavior:** the schema is **deep cloned** on registration to prevent external mutations. If `schema.$id`/`schema.id` isn't set, it's set to the provided `id`. Registering the same `id` again overwrites the previous schema.
+
+### Register with an explicit ID
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+const jetValidator = new JetValidator();
+
+const userSchema = {
+  type: "object",
+  properties: {
+    name:  { type: "string", minLength: 2 },
+    email: { type: "string", format: "email" },
+    age:   { type: "number", minimum: 0, maximum: 150 },
+  },
+  required: ["name", "email"],
+};
+
+jetValidator.addSchema(userSchema, "user-schema");
+
+const result = jetValidator.validate("user-schema", {
+  name: "John Doe",
+  email: "john@example.com",
+  age: 30,
+});
+```
+
+### Register with a `$id`/`id`(draft7) property
+
+```typescript
+const productSchema = {
+  $id: "https://example.com/schemas/product.json", // ord id:"https://example.com/schemas/product.json"
+  type: "object",
+  properties: {
+    name:    { type: "string" },
+    price:   { type: "number", minimum: 0 },
+    inStock: { type: "boolean" },
+  },
+  required: ["name", "price"],
+};
+
+jetValidator.addSchema(productSchema); // no explicit id needed
+
+const result = jetValidator.validate(
+  "https://example.com/schemas/product.json",
+  { name: "Widget", price: 29.99, inStock: true }
+);
+```
+
+### Register multiple schemas with cross-references
+
+```typescript
+const addressSchema = {
+  $id: "address",
+  type: "object",
+  properties: {
+    street:  { type: "string" },
+    city:    { type: "string" },
+    zipCode: { type: "string", pattern: "^[0-9]{5}$" },
+  },
+  required: ["street", "city", "zipCode"],
+};
+
+const customerSchema = {
+  $id: "customer",
+  type: "object",
+  properties: {
+    name:            { type: "string" },
+    billingAddress:  { $ref: "address" },
+    shippingAddress: { $ref: "address" },
+  },
+  required: ["name", "billingAddress"],
+};
+
+jetValidator.addSchema(addressSchema);
+jetValidator.addSchema(customerSchema);
+
+const result = jetValidator.validate("customer", {
+  name: "Jane Smith",
+  billingAddress:  { street: "123 Main St", city: "Boston", zipCode: "02101" },
+  shippingAddress: { street: "456 Oak Ave", city: "Cambridge", zipCode: "02138" },
+});
+console.log(result.valid); // true
+```
+
+### Error handling
+
+```typescript
+// Throws — no $id and no explicit id
+try {
+  jetValidator.addSchema({ type: "string", minLength: 5 });
+} catch (error) {
+  console.error(error.message); // "Attempting to register a schema that has no defined id."
+}
+
+// Correct
+jetValidator.addSchema({ type: "string", minLength: 5 }, "my-string-schema");
+```
+
+The deep clone means later mutations to the original object don't affect the registered copy, and re-registering an ID overwrites it:
+
+```typescript
+const schema = { type: "string" };
+jetValidator.addSchema(schema, "test");
+schema.type = "number"; // mutate original
+
+console.log(jetValidator.getSchema("test").type); // still 'string'
+
+jetValidator.addSchema({ type: "number" }, "test"); // overwrite
+console.log(jetValidator.getSchema("test").type); // 'number'
+```
+
+---
+
+## Retrieving Schemas
+
+### `getSchema(key)`
+
+Retrieve a registered schema definition (a **deep clone**) by its identifier.
+
+```typescript
+getSchema(key: string): SchemaDefinition | undefined
+```
+
+Returns a deep clone to prevent accidental mutation, does **not** compile the schema, and returns `undefined` (never throws) for a missing key.
+
+```typescript
+jetValidator.addSchema(
+  {
+    type: "object",
+    properties: { username: { type: "string", minLength: 3 } },
+  },
+  "user"
+);
+
+const schema = jetValidator.getSchema("user");
+// {
+//    $id: 'user',
+//    type: 'object',
+//    properties: { username: { type: 'string', minLength: 3 } }
+// }
+
+console.log(jetValidator.getSchema("non-existent")); // undefined
+```
+
+Because it returns a clone, mutating the retrieved schema doesn't affect the registry:
+
+```typescript
+jetValidator.addSchema({ type: "string", minLength: 5 }, "test");
+
+const schema1 = jetValidator.getSchema("test");
+schema1.minLength = 10;
+
+console.log(jetValidator.getSchema("test").minLength); // still 5
+```
+
+Useful for inspecting registered schemas, creating variations, exporting for documentation, or debugging what was actually registered.
+
+---
+
+### `getCompiledSchema(key, config?)`
+
+Retrieve or compile a validation function for a registered schema.
+
+```typescript
+getCompiledSchema(key: string, config?: ValidatorOptions): ErrorAttachedValidatorFn
+```
+
+**Throws:** if the schema isn't found.
+
+**Behavior:** checks the cache first (if enabled) and returns the cached validator; otherwise retrieves the schema, compiles it, caches it, and returns the validator. Config overrides apply only to this compilation.
+
+```typescript
+jetValidator.addSchema(
+  {
+    type: "object",
+    properties: {
+      email: { type: "string", format: "email" },
+      age:   { type: "number", minimum: 18 },
+    },
+    required: ["email"],
+  },
+  "user"
+);
+
+const validateUser = jetValidator.getCompiledSchema("user");
+
+console.log(validateUser({ email: "john@example.com", age: 25 })); // true
+console.log(validateUser({ email: "invalid-email", age: 16 }));    // false
+console.log(validateUser.errors); // validation errors
+```
+
+With a config override:
+
+```typescript
+const validateAllErrors = jetValidator.getCompiledSchema("user", {
+  allErrors: true,
+});
+```
+
+The compilation cache is shared with `compile` — compiling by `$id` and retrieving by key return the same cached function:
+
+```typescript
+const jetValidator = new JetValidator({ cache: true });
+jetValidator.addSchema({ type: "string" }, "test");
+
+const validate1 = jetValidator.getCompiledSchema("test");
+const validate2 = jetValidator.getCompiledSchema("test"); // cache hit
+console.log(validate1 === validate2); // true
+```
+
+### Error handling
+
+```typescript
+try {
+  const validate = jetValidator.getCompiledSchema("non-existent");
+} catch (error) {
+  console.error(error.message); // "Schema non-existent not found in registry."
+}
+
+// Safe: check first
+if (jetValidator.isSchemaAdded("my-schema")) {
+  const validate = jetValidator.getCompiledSchema("my-schema");
+}
+```
+
+`getCompiledSchema` takes a registered key and requires registration; `compile` takes a schema object and doesn't. Both cache — `getCompiledSchema` by id, `compile` by id or object reference.
+
+---
+
+### `getCompiledSchemaAsync(key, config?)`
+
+Asynchronously retrieve or compile a validator for a registered schema with remote references or async keywords.
+
+```typescript
+async getCompiledSchemaAsync(key: string, config?: ValidatorOptions): Promise<ErrorAttachedValidatorFn>
+```
+
+**Throws:** if the schema isn't found. Fetches remote references via `loadSchema`, checking the cache first.
+
+```typescript
+const jetValidator = new JetValidator({
+  loadSchema: async (uri) => {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error(`Failed to load schema: ${uri}`);
+    return response.json();
+  },
+});
+
+jetValidator.addSchema(
+  {
+    $id: "order",
+    type: "object",
+    properties: {
+      customer: { $ref: "https://api.example.com/schemas/customer.json" },
+      items: {
+        type: "array",
+        items: { $ref: "https://api.example.com/schemas/product.json" },
+      },
+      total: { type: "number", minimum: 0 },
+    },
+    required: ["customer", "items", "total"],
+  },
+  "order"
+);
+
+const validateOrder = await jetValidator.getCompiledSchemaAsync("order");
+
+const result = await validateOrder({
+  customer: { name: "John", email: "john@example.com" },
+  items: [{ name: "Widget", price: 10.99 }],
+  total: 10.99,
+});
+console.log(result); // true
+```
+
+Load remote schemas once at startup, then use the validators in request handlers:
+
+```typescript
+const setupValidation = async () => {
+  const validateUser  = await jetValidator.getCompiledSchemaAsync("user");
+  const validateOrder = await jetValidator.getCompiledSchemaAsync("order");
+  return { validateUser, validateOrder };
+};
+
+const validators = await setupValidation();
+
+app.post("/users", async (req, res) => {
+  const result = await validators.validateUser(req.body);
+  if (!result) return res.status(400).json({ errors: validators.validateUser.errors });
+  // ...
+});
+```
+
+---
+
+## Removing Schemas
+
+### `removeSchema(pattern?)`
+
+Remove one or more registered schemas.
+
+```typescript
+removeSchema(pattern?: string | RegExp | object): void
+```
+
+| Pattern Type | Behavior                                      |
+| :----------- | :-------------------------------------------- |
+| `undefined`  | Remove **all** schemas                        |
+| `string`     | Remove the schema with the exact matching key |
+| `RegExp`     | Remove all schemas whose keys match the regex |
+| `object`     | Remove the schema by object reference         |
+
+**Throws:** if a string key or object reference isn't found. Warns (doesn't throw) if a regex matches nothing.
+
+### Remove by exact key
+
+```typescript
+jetValidator.addSchema({ type: "string" }, "user-schema");
+jetValidator.addSchema({ type: "number" }, "product-schema");
+
+jetValidator.removeSchema("product-schema");
+console.log(jetValidator.getAddedSchemas()); // ['user-schema']
+
+try {
+  jetValidator.removeSchema("non-existent");
+} catch (error) {
+  console.error(error.message); // 'Schema "non-existent" is not registered.'
+}
+```
+
+### Remove by regex
+
+```typescript
+jetValidator.addSchema(schema1, "https://api.example.com/v1/user");
+jetValidator.addSchema(schema2, "https://api.example.com/v1/product");
+jetValidator.addSchema(schema3, "https://api.example.com/v2/user");
+
+// Remove all v1 schemas
+jetValidator.removeSchema(/\/v1\//);
+console.log(jetValidator.getAddedSchemas());
+// ['https://api.example.com/v2/user']
+```
+
+### Remove by object reference
+
+```typescript
+const userSchema = { type: "object", properties: { name: { type: "string" } } };
+jetValidator.addSchema(userSchema, "user");
+
+jetValidator.removeSchema(userSchema);
+
+try {
+  jetValidator.removeSchema({ type: "string" });
+} catch (error) {
+  console.error(error.message); // "Schema object not found in registry"
+}
+```
+
+### Remove all
+
+```typescript
+jetValidator.removeSchema(); // removes everything
+console.log(jetValidator.getAddedSchemas().length); // 0
+```
+
+### Cache invalidation
+
+Removing a schema also clears its cached validator, so re-registering the same key produces a fresh validator:
+
+```typescript
+const jetValidator = new JetValidator({ cache: true });
+
+jetValidator.addSchema({ type: "string" }, "test");
+const validate1 = jetValidator.getCompiledSchema("test");
+
+jetValidator.removeSchema("test");
+jetValidator.addSchema({ type: "number" }, "test");
+const validate2 = jetValidator.getCompiledSchema("test");
+
+console.log(validate1 === validate2); // false
+console.log(validate1("hello")); // true (string)
+console.log(validate2(123));     // true (number)
+```
+
+Common uses: removing old API-version schemas during migration (`removeSchema(/\/v1\//)`), clearing environment-specific schemas, or tearing down tenant-specific schemas by prefix.
+
+---
+
+### `clearSchemas()`
+
+Remove all registered schemas. Equivalent to `removeSchema()` with no arguments.
+
+```typescript
+clearSchemas(): void
+```
+
+---
+
+### `clearRegistries()`
+
+Complete reset — clears all schemas, custom formats, custom keywords, and the compilation cache.
+
+```typescript
+clearRegistries(): void
+```
+
+```typescript
+jetValidator.addSchema(userSchema, "user");
+jetValidator.addFormat("custom", /^test$/);
+jetValidator.addKeyword({ keyword: "isEven", validate: () => true });
+jetValidator.compile({ type: "string" });
+
+jetValidator.clearRegistries();
+
+console.log(jetValidator.getAddedSchemas().length);       // 0
+console.log(jetValidator.getRegisteredFormats().length);  // only built-in formats
+console.log(jetValidator.getAddedKeywords().length);      // 0
+// Cached validators are cleared too
+```
+
+Handy for test setup/teardown to guarantee a clean slate between cases.
+
+---
+
+## Querying Schemas
+
+### `isSchemaAdded(key)`
+
+```typescript
+isSchemaAdded(key: string): boolean
+```
+
+```typescript
+jetValidator.addSchema(userSchema, "user");
+
+console.log(jetValidator.isSchemaAdded("user"));    // true
+console.log(jetValidator.isSchemaAdded("product")); // false
+```
+
+### `getAddedSchemas()`
+
+Get an array of all registered schema keys.
+
+```typescript
+getAddedSchemas(): string[]
+```
+
+```typescript
+const keys = jetValidator.getAddedSchemas();
+// ['user', 'product', 'https://api.example.com/order']
+
+keys.forEach((key) => {
+  const schema = jetValidator.getSchema(key);
+  console.log(`${key}: ${schema.type}`);
+});
+```
+
+### `getAllSchemas()`
+
+Get all registered schemas as an object map.
+
+```typescript
+getAllSchemas(): Record<string, SchemaDefinition>
+```
+
+```typescript
+jetValidator.addSchema({ type: "string" }, "user");
+jetValidator.addSchema({ type: "number" }, "product");
+
+const allSchemas = jetValidator.getAllSchemas();
+// {
+//   user:    { $id: 'user', type: 'string' },
+//   product: { $id: 'product', type: 'number' }
+// }
+```
+
+---
+
+## API Reference
+
+| Method                   | Signature                                                                  | Returns                             | Description                 |
+| :----------------------- | :------------------------------------------------------------------------- | :---------------------------------- | :-------------------------- |
+| `addSchema`              | `(schema: SchemaDefinition, id?: string)`                                  | `void`                              | Register a schema           |
+| `getSchema`              | `(key: string)`                                                            | `SchemaDefinition \| undefined`     | Get schema definition       |
+| `getCompiledSchema`      | `(key: string, config?: ValidatorOptions)`                                 | `ErrorAttachedValidatorFn`          | Get/compile sync validator  |
+| `getCompiledSchemaAsync` | `(key: string, config?: ValidatorOptions)`                                 | `Promise<ErrorAttachedValidatorFn>` | Get/compile async validator |
+| `removeSchema`           | `(pattern?: string \| RegExp \| object)`                                   | `void`                              | Remove schema(s)            |
+| `clearSchemas`           | `()`                                                                        | `void`                              | Remove all schemas          |
+| `clearRegistries`        | `()`                                                                        | `void`                              | Clear everything            |
+| `isSchemaAdded`          | `(key: string)`                                                            | `boolean`                           | Check if a schema exists    |
+| `getAddedSchemas`        | `()`                                                                        | `string[]`                          | List all schema keys        |
+| `getAllSchemas`          | `()`                                                                        | `Record<string, SchemaDefinition>`  | Get all schemas             |

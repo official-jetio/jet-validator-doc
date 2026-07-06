@@ -1,0 +1,165 @@
+---
+title: Async & Effectful Validation
+description: How @jetio/validator runs asynchronous and effectful custom keywords and formats, and how to use them safely.
+---
+
+import { Callout } from "nextra/components";
+
+# Async & Effectful Validation
+
+@jetio/validator lets validation do more than check shape. Custom keywords and custom formats can run **asynchronous, effectful logic** — database lookups, API calls, service checks — as part of validation. This is intentional: your schema can describe not just what valid data looks like, but the work required to confirm it.
+
+This page explains how effectful validation runs so you can use it safely.
+
+---
+
+## What counts as "effectful"
+
+An effectful keyword or format is any validator that does more than inspect the value in front of it. In practice that means anything `async`, or anything that reaches outside the data being validated:
+
+- An async custom keyword (`compile`, `validate`, or `code`) that awaits a result
+- An async custom format that awaits a result
+- Any validator that performs I/O — `fetch`, a database query, a cache read, a filesystem call
+
+A plain `minLength` check is pure: it looks at the string and returns. A `uniqueEmail` keyword that queries your database is effectful: it leaves your process, talks to something, and the answer can change over time.
+
+Both are valid. The rest of this page is about the second kind.
+
+---
+
+## Enabling async
+
+Async validators only work when the validator is in async mode. Set it on the instance, or per-compilation:
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+// or
+const validate = jetValidator.compile(schema, { async: true });
+```
+
+In async mode, compiled validators return a `Promise`, so validation must be awaited:
+
+```typescript
+const result = await validate(data);
+```
+
+<Callout type="warning">
+  Without `async: true`, async validators can produce race conditions and
+  incorrect results, since the engine won't wait for them to settle. If a schema
+  uses **any** async keyword or format, the whole validation must run in async
+  mode.
+</Callout>
+
+---
+
+## The execution model
+
+Effectful validators follow three rules. None are surprising on their own, but together they determine how often your effects actually run.
+
+### 1. They run on every validation call
+
+A compiled validator is reusable, but it is not memoized per input. Calling `validate(data)` runs the schema against `data` from scratch each time — including every effect.
+
+### 2. Re-validating re-runs them
+
+This is the one most worth internalizing. If you validate, the user corrects a field, and you validate again, **every effectful keyword and format runs again.** Two validations of the same object means two rounds of effects.
+
+```typescript
+await validate(form); // runs uniqueEmail, checkUsername
+// user fixes a field
+await validate(form); // runs uniqueEmail, checkUsername AGAIN
+```
+
+For a read-only check (does this email already exist?) this is harmless — the answer is the same and re-asking costs nothing meaningful. For a write or a charge (send a verification email, deduct a quota, create a record) it is not: the effect happens twice.
+
+### 3. In all-errors mode, every effect in scope runs
+
+With `allErrors: false` (fail-fast), validation stops at the first failure, so a later effectful keyword may never run. With `allErrors: true`, validation continues to collect every error, so **all** effectful keywords in scope run regardless of whether an earlier one failed.
+
+This is the correct behavior for collecting complete error messages, and it's usually what you want for form validation. Just be aware that the error mode changes how many effects fire.
+
+---
+
+## The one principle: keep effects idempotent
+
+Everything above reduces to a single guideline:
+
+<Callout type="info">
+  An effectful validator should be safe to run more than once on the same value.
+</Callout>
+
+If repeating the effect is harmless, you never have to think about any of this. Most validation effects are naturally idempotent:
+
+- Checking whether an email or username already exists
+- Looking up a record by ID
+- Verifying a token against a service
+- Reading a value from a cache or config service
+
+These are all _reads_. Running them twice asks the same question twice and gets the same answer. This is the common case, and it just works.
+
+The cases that need care are _writes_ and _costs_ — effects that change something or have a price each time they run:
+
+- Sending an email or SMS
+- Charging a card or consuming a paid quota
+- Creating, updating, or deleting a record
+- Anything rate-limited or billed per call
+
+If a validator does one of these, the schema cannot tell on its own that it shouldn't be replayed. Guarding it is up to you: make the operation idempotent (e.g. an upsert keyed on a stable id, a deduplicated send), or move the side effect out of validation entirely and let validation only _check_ a result the effect produced elsewhere.
+
+<Callout type="default">
+  A useful rule of thumb: **validation should confirm facts, not cause them.**
+  Use effectful keywords to *ask* questions (is this unique? does this exist? is
+  this allowed?), and keep state-changing actions in your application logic
+  where you control exactly when they happen.
+</Callout>
+
+---
+
+## Practical guidance
+
+A few patterns that keep effectful validation predictable.
+
+**Add timeouts.** A network or database check that hangs will hang validation. Bound it:
+
+```typescript
+jetValidator.addKeyword({
+  keyword: "remoteCheck",
+  type: "string",
+  async: true,
+  compile: (config) => async (data) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeout ?? 5000);
+    try {
+      const res = await fetch(config.url, { signal: controller.signal });
+      clearTimeout(timer);
+      const result = await res.json();
+      return result.valid || { message: result.error ?? "Validation failed" };
+    } catch (err) {
+      clearTimeout(timer);
+      return {
+        message:
+          err.name === "AbortError"
+            ? "Validation timed out"
+            : "Validation error",
+      };
+    }
+  },
+});
+```
+
+**Cache when the answer is stable.** If the same value is validated repeatedly and the underlying fact rarely changes, cache the result to avoid redundant calls. Cache deliberately — a stale cache can mask a real change.
+
+**Handle failure as a validation outcome, not a crash.** Wrap effectful logic in `try/catch` and return a validation error on failure, so a flaky dependency produces a clear message instead of an unhandled rejection.
+
+**Prefer reads in validation.** If you find yourself writing or charging inside a validator, that's usually a sign the effect belongs in your application flow, with validation only confirming the result.
+
+---
+
+## Summary
+
+- Custom keywords and formats can run async, effectful logic — this is a feature, not a workaround.
+- Effects run on **every** validation call, **re-run** on re-validation, and in **all-errors mode every effect in scope runs**.
+- Keep effects **idempotent**. Reads (existence, lookup, verification) are safe to repeat and need no special care. Writes and costs (send, charge, create) should be guarded or moved out of validation.
+- Always run async validators with `async: true`, add timeouts, and treat dependency failures as validation errors.
+
+Used this way, an effectful schema lets you express real verification declaratively — the schema asks for what it needs, and the engine runs it — without surprises about when or how often the work happens.

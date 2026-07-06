@@ -1,0 +1,137 @@
+---
+title: "Upgrading to 2.0"
+description: "What changed in JetValidator 2.0, why, and how to update your code."
+---
+
+# Upgrading to 2.0
+
+JetValidator 2.0 is a breaking release. Most of the changes are corrections to flawed v1 behavior, and in practice they affect very little real-world code — schema-validation errors surface more honestly, and error messages resolve more completely. This page covers everything that changed and what, if anything, you need to do.
+
+If you can't upgrade yet, v1 remains available on npm and its source is preserved at its release tag in the repository, it also has its own branch. v1 is deprecated and will not receive further fixes, since fixing v1 is precisely what produced these breaking changes.
+
+---
+
+## At a Glance
+
+| Change | Impact | Action needed |
+| :--- | :--- | :--- |
+| Invalid schemas now throw on compile | Breaking | Wrap `compile` in try/catch if you compiled untrusted schemas |
+| `strictSchema` and `metaSchemaError` removed | Breaking | Remove references to them |
+| Error messages now resolve at the parent level | Behavioral | Review parent-level `errorMessage` that was previously inert |
+| `dependentRequired` gained a third targeting level | Additive | None |
+| `id` accepted alongside `$id` | Additive | None |
+
+---
+
+## Compilation Throws on Invalid Schemas
+
+In v1, compiling an invalid schema could return a **failing validator** — a function that returned `false` for any data, flagged with a `metaSchemaError` property. This was dangerous: a broken schema was easy to mistake for invalid data, because both produced a `false` result.
+
+In 2.0, `compile` and `compileAsync` **throw** when a schema fails meta-schema validation. A broken schema stops compilation immediately and loudly, so it can never be confused with a data-validation failure.
+
+```typescript
+const jetValidator = new JetValidator({ validateSchema: true, metaSchema: "draft-07" });
+
+const invalidSchema = { type: "invalid-type" };
+
+// v1: returned a failing validator
+// const validate = jetValidator.compile(invalidSchema);
+// validate({}) === false  // looks like invalid data, but the schema is broken
+
+// 2.0: throws the validation errors
+try {
+  const validate = jetValidator.compile(invalidSchema);
+} catch (errors) {
+  console.error(errors); // the schema-validation errors array
+}
+```
+
+**What to do:** if you compile schemas that might be malformed (for example, user-supplied schemas), wrap `compile`/`compileAsync` in a try/catch. If you only ever compile trusted, known-valid schemas, you don't need to change anything.
+
+---
+
+## `strictSchema` and `metaSchemaError` Are Removed
+
+These two existed only to support the old "return a failing validator instead of throwing" behavior, which is now gone.
+
+- **`strictSchema`** — the option that toggled throw-vs-return no longer exists. Compilation always throws on an invalid schema.
+- **`metaSchemaError`** — the flag that marked a failing validator's errors as schema errors is gone, because there's no failing validator to flag.
+
+**What to do:** remove any `strictSchema` option from your constructor or compile config, and remove any code that checks `errors[0].metaSchemaError`. Schema failures now arrive as a thrown value instead.
+
+---
+
+## Schema Validation Methods Always Return a Result
+
+`validateSchemaSync` and `validateSchemaAsync` return a `ValidationResult` and **never throw** — including when the requested meta-schema isn't loaded. In that case they return a result with a descriptive error rather than throwing:
+
+```typescript
+const result = jetValidator.validateSchemaSync(schema, { metaSchema: "draft-07" });
+
+if (!result.valid) {
+  console.log(result.errors); // includes "metaSchema not found" if it wasn't loaded
+}
+```
+
+In v1 the async method's behavior here was inconsistent with the sync one; 2.0 makes them identical. If you previously wrapped these methods in try/catch specifically to handle a missing meta-schema, you can now check `result.valid` instead.
+
+---
+
+## Error Messages Resolve at the Parent Level
+
+This is the largest behavioral change, and the reason for the major version bump — though in practice most schemas are unaffected.
+
+In v1, many keywords **refused to look at their parent level** for a custom error message. Boundary-creating keywords (`anyOf`, `then`, `else`, `prefixItems`, and so on) and several straying keywords only resolved a message defined **inside** themselves or at the **root**. A message placed at the immediate parent level was silently ignored.
+
+2.0 unifies resolution: every keyword now checks three levels in order — its **own level**, its **parent level**, then the **root**. There are no longer any keywords with special "no parent" behavior.
+
+**Why this rarely breaks anything:** because v1 ignored parent-level messages, real-world schemas defined their messages either inside the keyword or at the root — both of which still resolve **identically** in 2.0. The only observable difference is that a parent-level `errorMessage` which did nothing in v1 will now **activate** in 2.0.
+
+```typescript
+// In v1, the parent-level message here was ignored (anyOf refused parent lookup),
+// so errors fell back to the default message.
+// In 2.0, it now resolves and applies.
+const schema = {
+  type: "object",
+  properties: {
+    b: {
+      anyOf: [{ type: "string" }, { type: "number" }],
+    },
+  },
+  errorMessage: {
+    properties: {
+      b: {
+        anyOf: { 0: "Must be a string", 1: "Must be a number" },
+      },
+    },
+  },
+};
+```
+
+**What to do:** if you assert on exact error-message text (in tests, i18n keys, or UI), review any parent-level `errorMessage` definitions — a message that was previously inert may now appear. If you define messages inside keywords or at the root, nothing changes. See [Resolution Rules](/errors/error-messages-resolution) for the full model.
+
+---
+
+## `dependentRequired` Gained a Third Targeting Level
+
+In v1, `dependentRequired` error messages had two levels of targeting and couldn't be defined from the parent level. In 2.0 it supports three forms — whole-keyword string, per-key string, and per-key-per-dependency — and participates in normal parent-level resolution.
+
+This is **additive**: existing two-level configurations continue to work unchanged. See [Patterns by Keyword](/errors/error-messages-patterns#dependentrequired) for all three forms.
+
+---
+
+## `id` Accepted Alongside `$id`
+
+For backward compatibility with older JSON Schema drafts, the schema registry, the compilation cache, and reference resolution now recognise a legacy `id` property in addition to `$id`. If a schema uses `id` instead of `$id`, it's registered, cached, and referenced correctly.
+
+This is **additive** — schemas using `$id` are unaffected.
+
+---
+
+## Migration Checklist
+
+1. Wrap `compile`/`compileAsync` in try/catch **if** you compile schemas that might be invalid.
+2. Remove any `strictSchema` option and any `metaSchemaError` checks.
+3. Replace try/catch around `validateSchemaSync`/`validateSchemaAsync` with a `result.valid` check if you used it to catch missing meta-schemas.
+4. Review parent-level `errorMessage` definitions **if** you assert on exact message text.
+5. Everything else — including messages defined inside keywords or at the root — works unchanged.

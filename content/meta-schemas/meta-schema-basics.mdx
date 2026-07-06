@@ -1,0 +1,88 @@
+---
+title: "Meta-Schema Basics"
+description: "What meta-schemas are, why you'd validate schemas, and which JSON Schema drafts @jetio/validator supports."
+---
+
+# Meta-Schema Basics
+
+The meta-schema system in @jetio/validator validates that your JSON Schemas are correctly structured according to JSON Schema specifications. This ensures your schemas are valid before you use them for data validation.
+
+## What Are Meta-Schemas?
+
+A **meta-schema** is a JSON Schema that validates other JSON Schemas. It defines:
+
+- What keywords are allowed
+- The structure of keyword values
+- Relationships between keywords
+- Draft-specific rules and constraints
+
+Think of it as "schema validation for schemas."
+
+```typescript
+// Your data schema
+const userSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// A meta-schema validates that userSchema is correct:
+// - Is 'type' a valid keyword?
+// - Is 'object' a valid type value?
+// - Is 'properties' structured correctly?
+```
+
+---
+
+## Why Validate Schemas?
+
+**1. Catch typos and errors early**
+
+```typescript
+const badSchema = {
+  type: "objct", // Typo: should be 'object'
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+jetValidator.validateSchema(badSchema); // false
+```
+
+**2. Prevent invalid configurations**
+
+```typescript
+const invalidSchema = {
+  type: "number",
+  minimum: "10", // String instead of number
+};
+
+jetValidator.validateSchema(invalidSchema); // false
+```
+
+**3. Enforce draft compatibility**
+
+```typescript
+// Using a Draft 2020-12 keyword with Draft-07
+const incompatibleSchema = {
+  $schema: "https://json-schema.org/draft-07/schema",
+  type: "object",
+  unevaluatedProperties: false, // Only in 2019-09+
+};
+
+jetValidator.validateSchema(incompatibleSchema); // false
+```
+
+---
+
+## Supported JSON Schema Drafts
+
+| Draft             | URI                                            | Year | Key Features                                                   |
+| :---------------- | :--------------------------------------------- | :--- | :------------------------------------------------------------- |
+| **Draft-06**      | `https://json-schema.org/draft-06/schema`      | 2017 | `const`, `contains`, `propertyNames`                           |
+| **Draft-07**      | `https://json-schema.org/draft-07/schema`      | 2018 | `if`/`then`/`else`, `readOnly`, `writeOnly`                    |
+| **Draft 2019-09** | `https://json-schema.org/draft/2019-09/schema` | 2019 | `unevaluatedProperties`, `unevaluatedItems`, vocabulary system |
+| **Draft 2020-12** | `https://json-schema.org/draft/2020-12/schema` | 2020 | `prefixItems`, `$dynamicRef`, improved `$ref`                  |
+
+**Recommendation:** Use **Draft-07** for maximum compatibility, or **Draft 2020-12** for the newest features.

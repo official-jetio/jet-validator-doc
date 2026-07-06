@@ -1,0 +1,485 @@
+---
+title: "Patterns by Keyword"
+description: "Worked error message examples for each keyword family: logical operators, conditionals, arrays, and dependent validation."
+---
+
+# Patterns by Keyword
+
+Worked examples for each keyword family. All follow the [Resolution Rules](/errors/error-messages-resolution) — this page shows them applied.
+
+---
+
+## Logical Operators (anyOf / oneOf / allOf)
+
+Index-accessed — use the indexed or array form, never a general string.
+
+### Per-Branch, Array Form
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: [
+      "String must have at least 5 characters",
+      "Number must be at least 100",
+    ],
+  },
+};
+```
+
+### Per-Branch, Object Form
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: {
+      0: "String must have at least 5 characters",
+      1: "Number must be at least 100",
+    },
+  },
+};
+```
+
+### Per-Keyword Within Each Branch
+
+```typescript
+const schema = {
+  anyOf: [
+    { type: "string", minLength: 5, maxLength: 20 },
+    { type: "number", minimum: 100 },
+  ],
+  errorMessage: {
+    anyOf: [
+      {
+        _jetError: "Must be a valid string",
+        minLength: "String too short",
+        maxLength: "String too long",
+      },
+      {
+        _jetError: "Must be a valid number",
+        minimum: "Number too small",
+      },
+    ],
+  },
+};
+```
+
+---
+
+## Conditionals (if / then / else)
+
+`if` produces no errors. `then` and `else` are schema-accepting — they take a general string or drill in.
+
+### General String
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    country: { type: "string" },
+  },
+  if: { properties: { country: { const: "US" } } },
+  then: {
+    required: ["stateCode"],
+    minProperties: 2,
+  },
+  else: {
+    required: ["countryCode"],
+  },
+  errorMessage: {
+    then: "US addresses need a state code",
+    else: "Non-US addresses need a country code",
+  },
+};
+```
+
+### Drilling Into then/else
+
+```typescript
+const schema = {
+  if: { properties: { country: { const: "US" } } },
+  then: {
+    properties: { postalCode: { pattern: "^[0-9]{5}$" } },
+  },
+  errorMessage: {
+    then: {
+      properties: {
+        postalCode: "Invalid ZIP code format",
+      },
+    },
+  },
+};
+```
+
+### Defined Inside then (Current Level)
+
+```typescript
+const schema = {
+  if: { properties: { country: { const: "US" } } },
+  then: {
+    properties: { postalCode: { pattern: "^[0-9]{5}$" } },
+    errorMessage: {
+      properties: {
+        postalCode: "Invalid ZIP code format",
+      },
+    },
+  },
+};
+```
+
+---
+
+## Array prefixItems/items(draft 07)
+
+Index-accessed — indexed or array form, no general string.
+
+```typescript
+// Array form
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: [
+      "First item must be a string",
+      "Second item must be a number",
+    ],
+  },
+};
+
+// Object form
+const schemaObj = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: {
+      0: "First item must be a string",
+      1: "Second item must be a number",
+    },
+  },
+};
+
+// Per-keyword within an index
+const schemaDetailed = {
+  type: "array",
+  prefixItems: [{ type: "string" }, { type: "number" }],
+  errorMessage: {
+    prefixItems: {
+      0: { type: "First item must be a string" },
+      1: { type: "Second item must be a number" },
+    },
+  },
+};
+```
+
+---
+
+## Single-Schema Array Keywords
+
+`additionalItems`(draft07), `unevaluatedItems`, and single-schema `items`(draft2019) are schema-accepting:
+
+```typescript
+const schema = {
+  type: "array",
+  prefixItems: [{ type: "string" }],
+  items: false,
+  errorMessage: {
+    items: "No additional items allowed",
+  },
+};
+```
+
+---
+
+## Object Properties
+
+`properties` and `patternProperties` are key-accessed. Same structure — the regex is the key for `patternProperties`.
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    c: { type: "string" },
+  },
+  patternProperties: {
+    "^[0-9]+$": { type: "number" },
+  },
+  errorMessage: {
+    properties: {
+      c: "c must be a string",
+    },
+    patternProperties: {
+      "^[0-9]+$": { type: "Numeric keys must map to numbers" },
+    },
+  },
+};
+```
+
+### additionalProperties / unevaluatedProperties
+
+Schema-accepting — general string or drill-in:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+  additionalProperties: { type: "number" },
+  errorMessage: {
+    additionalProperties: "Additional properties must be numbers",
+  },
+};
+```
+
+---
+
+## propertyNames
+
+Two forms — string, or keyword-targeted:
+
+```typescript
+// String form
+const schema1 = {
+  type: "object",
+  propertyNames: { pattern: "^[a-z]+$" },
+  errorMessage: {
+    propertyNames: "Property names must be lowercase letters",
+  },
+};
+
+// Keyword-targeted form
+const schema2 = {
+  type: "object",
+  propertyNames: { pattern: "^[a-z]+$" },
+  errorMessage: {
+    propertyNames: {
+      pattern: "Property names must be lowercase letters",
+    },
+  },
+};
+```
+
+---
+
+## required
+
+General string only:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    email: { type: "string" },
+    name:  { type: "string" },
+  },
+  required: ["email", "name"],
+  errorMessage: {
+    required: "Email and name are both required",
+  },
+};
+```
+
+---
+
+## dependentRequired
+ 
+Validation-keyword mapping. It carries a rule and produces errors under its own keyword name, so it has three forms.
+ 
+**Form 1 — whole-keyword general string.** One message for every `dependentRequired` failure, no matter which key or which missing dependency:
+ 
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    creditCard:     { type: "string" },
+    cvv:            { type: "string" },
+    billingAddress: { type: "string" },
+  },
+  dependentRequired: {
+    creditCard: ["cvv", "billingAddress"],
+    email:      ["verified"],
+  },
+  errorMessage: {
+    dependentRequired: "A required dependency is missing",
+  },
+};
+```
+ 
+**Form 2 — per-key string.** One message per triggering property, covering all of that property's dependencies:
+ 
+```typescript
+const schema = {
+  type: "object",
+  dependentRequired: {
+    creditCard: ["cvv", "billingAddress"],
+    email:      ["verified"],
+  },
+  errorMessage: {
+    dependentRequired: {
+      creditCard: "CVV and billing address required for credit card payments",
+      email:      "Verification status required with email",
+    },
+  },
+};
+```
+ 
+**Form 3 — per-key, per-dependency.** Drill into a specific missing dependency. A string at the key level acts as the general message for that key; an object targets individual dependencies:
+ 
+```typescript
+const schema = {
+  type: "object",
+  dependentRequired: {
+    creditCard: ["cvv", "billingAddress"],
+    email:      ["verified"],
+  },
+  errorMessage: {
+    dependentRequired: {
+      creditCard: {
+        cvv:            "CVV is required for card payments",
+        billingAddress: "Billing address is required for card payments",
+      },
+      email: "Verification status required",  // per-key string still fine alongside
+    },
+  },
+};
+```
+
+---
+
+## dependentSchemas
+
+Key-accessed mapping — same rules as `properties`. Each key maps to a sub-schema, targeted per-key, one level down:
+
+```typescript
+const schema = {
+  type: "object",
+  dependentSchemas: {
+    paymentMethod: {
+      required: ["cardNumber"],
+      maxProperties: 2,
+    },
+  },
+  errorMessage: {
+    dependentSchemas: {
+      paymentMethod: {
+        _jetError: "Payment method rules failed",
+        required: "Card number required when payment method is present",
+      },
+    },
+  },
+};
+```
+
+Because the one-level-down rule applies, deeper nesting inside a `dependentSchemas` sub-schema must be defined on that sub-schema directly, or from root:
+
+```typescript
+// ❌ too deep from this level
+errorMessage: {
+  dependentSchemas: {
+    type: {
+      properties: { kkk: { type: "won't resolve" } },  // more than one level down
+    },
+  },
+}
+```
+
+---
+
+## dependencies (Legacy)
+
+Split by form:
+- **Array form** (key → required field names) behaves like `dependentRequired`
+- **Schema form** (key → sub-schema) behaves like `dependentSchemas`
+
+```typescript
+const schema = {
+  type: "object",
+  dependencies: {
+    creditCard: ["cvv"],                              // array form - acts as dependentRequired above
+    email: { type: "object", required: ["verified"] }, // schema form - acts as dependentSchemas above
+  },
+  errorMessage: {
+    dependencies: {
+      creditCard: "CVV required with credit card",
+      email: {
+        required: "Verification status required",
+      },
+    },
+  },
+};
+```
+
+---
+
+## not
+
+No errors are collected inside `not` (its purpose is to fail). Define the message for the `not` keyword itself:
+
+```typescript
+const schema = {
+  type: "string",
+  not: { pattern: "^admin" },
+  errorMessage: {
+    not: "Username cannot start with 'admin'",
+  },
+};
+```
+
+---
+
+## Centralized from Root
+
+Any of the above can be authored from root by following the full path. Useful when you want all messages in one place:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        profile: {
+          type: "object",
+          properties: {
+            name: { type: "string", minLength: 2 },
+            age:  { type: "number", minimum: 0 },
+          },
+        },
+      },
+    },
+  },
+  errorMessage: {
+    properties: {
+      user: {
+        _jetError: "User object invalid",
+        properties: {
+          profile: {
+            _jetError: "Profile invalid",
+            properties: {
+              name: "Invalid name",
+              age:  "Invalid age",
+            },
+          },
+        },
+      },
+    },
+  },
+};
+```
+
+---
+
+## Best Practices
+
+1. **Prefer the current level** — define `errorMessage` on the schema being validated when you can. It's the shortest path and the easiest to read.
+2. **Use `_jetError` when a level mixes navigation and plain keywords** — cover the plain keywords in bulk, target the navigation keywords explicitly.
+3. **Know the form for each keyword** — index/key-accessed keywords (`properties`, `anyOf`, `prefixItems`, etc.) never take a general string; schema-accepting keywords (`then`, `additionalProperties`, etc.) do.
+4. **Respect the one-level-down limit** — at non-root levels you can only reach one level down. Go deeper by defining closer to the failure, or from root.
+5. **Use root for centralized messages** — root can follow the full path to any depth. Good for keeping all messages in one place, at the cost of verbosity.

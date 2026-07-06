@@ -1,0 +1,441 @@
+---
+title: "$data Examples & Patterns"
+description: "Real-world examples, edge cases, common mistakes, and best practices for $data."
+---
+
+# $data Examples & Patterns
+
+Practical examples, edge cases, and common mistakes when using `$data`.
+
+> Make sure you've read the [$data Keyword](/advanced/data-keyword) page first — this page assumes familiarity with pointer syntax and supported keywords.
+
+---
+
+## Real-World Examples
+
+### Dynamic Form Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    fieldType: { type: "string", enum: ["short", "medium", "long"] },
+    maxLength: { type: "integer" },
+    minLength: { type: "integer" },
+    value: {
+      type: "string",
+      minLength: { $data: "1/minLength" },
+      maxLength: { $data: "1/maxLength" },
+    },
+  },
+  required: ["fieldType", "maxLength", "minLength", "value"],
+};
+
+{ fieldType: "short", minLength: 1, maxLength: 50, value: "Hello" }  // ✅
+{ fieldType: "long", minLength: 100, maxLength: 5000, value: "Lorem ipsum...".repeat(20) }  // ✅
+```
+
+---
+
+### Date Range Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    startDate: { type: "string", format: "date" },
+    endDate: {
+      type: "string",
+      format: "date",
+      formatMinimum: { $data: "1/startDate" }
+    },
+    bookingDate: {
+      type: "string",
+      format: "date",
+      formatMinimum: { $data: "1/startDate" },
+      formatMaximum: { $data: "1/endDate" }
+    }
+  },
+  required: ["startDate", "endDate"]
+};
+
+{ startDate: "2024-01-01", endDate: "2024-01-31", bookingDate: "2024-01-15" }  // ✅
+{ startDate: "2024-01-01", endDate: "2024-01-31", bookingDate: "2024-02-15" }  // ❌ after endDate
+```
+
+---
+
+### Role-Based Permissions
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    permissions: { type: "array", items: { type: "string" } },
+    requestedAction: {
+      type: "string",
+      enum: { $data: "1/permissions" }
+    }
+  },
+  required: ["permissions", "requestedAction"]
+};
+
+{ permissions: ["read", "write", "delete"], requestedAction: "delete" }  // ✅
+{ permissions: ["read"], requestedAction: "write" }                       // ❌
+```
+
+---
+
+### Configuration-Driven Validation
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    config: {
+      type: "object",
+      properties: {
+        validation: {
+          type: "object",
+          properties: {
+            minItems: { type: "integer", minimum: 0 },
+            maxItems: { type: "integer", minimum: 1 },
+            uniqueRequired: { type: "boolean" }
+          }
+        }
+      }
+    },
+    items: {
+      type: "array",
+      items: { type: "string" },
+      minItems:    { $data: "1/config/validation/minItems" },
+      maxItems:    { $data: "1/config/validation/maxItems" },
+      uniqueItems: { $data: "1/config/validation/uniqueRequired" }
+    }
+  }
+};
+
+// Strict config
+{
+  config: { validation: { minItems: 3, maxItems: 10, uniqueRequired: true } },
+  items: ["apple", "banana", "cherry"]  // ✅
+}
+
+// Permissive config
+{
+  config: { validation: { minItems: 0, maxItems: 100, uniqueRequired: false } },
+  items: ["a", "a", "b"]  // ✅ duplicates allowed
+}
+```
+
+---
+
+### Multi-Step Form with Progressive Requirements
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    step: { type: "integer", minimum: 1, maximum: 3 },
+    requiredFields: { type: "array", items: { type: "string" } },
+    name: { type: "string" },
+    email: { type: "string", format: "email" },
+    phone: { type: "string" },
+    address: { type: "string" },
+    payment: { type: "string" }
+  },
+  required: { $data: "/requiredFields" }
+};
+
+// Step 1
+{ step: 1, requiredFields: ["name", "email"], name: "John", email: "j@example.com" }  // ✅
+
+// Step 2
+{ step: 2, requiredFields: ["name", "email", "phone", "address"], name: "John", email: "j@example.com", phone: "555-0100", address: "123 Main St" }  // ✅
+
+// Step 3
+{ step: 3, requiredFields: ["name", "email", "phone", "address", "payment"], /* ... */ payment: "credit-card" }  // ✅
+```
+
+---
+
+### Tiered Limits
+
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    tier: { type: "string", enum: ["bronze", "silver", "gold", "platinum"] },
+    tierLimits: {
+      type: "object",
+      properties: {
+        maxUsers:    { type: "integer" },
+        maxStorage:  { type: "integer" },
+        maxProjects: { type: "integer" }
+      }
+    },
+    users:    { type: "array", items: { type: "string" }, maxItems: { $data: "1/tierLimits/maxUsers" } },
+    storage:  { type: "integer", maximum: { $data: "1/tierLimits/maxStorage" } },
+    projects: { type: "array", items: { type: "object" }, maxItems: { $data: "1/tierLimits/maxProjects" } }
+  }
+};
+
+{
+  tier: "bronze",
+  tierLimits: { maxUsers: 5, maxStorage: 10, maxProjects: 3 },
+  users: ["user1", "user2"],
+  storage: 8,
+  projects: [{}, {}]
+}  // ✅
+```
+
+---
+
+## Edge Cases
+
+### Missing Reference
+
+```javascript
+// Data: maxValue is missing
+{ value: 100 }
+
+// Constraint is skipped — validation passes
+```
+
+Missing references never throw. The constraint is silently skipped.
+
+---
+
+### Wrong Type Reference
+
+```javascript
+{ maxValue: "100", value: 150 }
+// maxValue is a string, maximum expects a number → skipped
+// Validation passes
+```
+
+Type mismatches are silently skipped. Always validate the referenced field to catch this.
+
+---
+
+### Invalid Regex Pattern
+
+```javascript
+{ pattern: "[invalid(", value: "test" }
+// Invalid regex → caught in try-catch → validation skipped
+```
+
+---
+
+### Circular References
+
+```javascript
+const schema = {
+  properties: {
+    a: { type: "number", maximum: { $data: "1/b" } },
+    b: { type: "number", maximum: { $data: "1/a" } }
+  }
+};
+
+{ a: 10, b: 20 }
+// Check a: is 10 <= 20? ✅
+// Check b: is 20 <= 10? ❌
+```
+
+Circular `$data` references are fine — they just read values independently, no infinite loop.
+
+---
+
+### Empty Required Array
+
+```javascript
+{ requiredFields: [] }
+// required: { $data: "/requiredFields" } → nothing required → passes
+```
+
+---
+
+### $data Inside anyOf/allOf/oneOf
+
+```javascript
+const schema = {
+  properties: {
+    maxValue: { type: "number" },
+    value: {
+      type: "number",
+      anyOf: [
+        { maximum: 10 },
+        { maximum: { $data: "2/maxValue" } }
+      ]
+    }
+  }
+};
+
+{ maxValue: 100, value: 50 }
+// anyOf #1: 50 <= 10? ❌
+// anyOf #2: 50 <= 100? ✅ — valid
+```
+
+---
+
+### Deep Path Hits Undefined
+
+```javascript
+{ config: {}, value: 100 }
+// $data: "/config/limits/max" → config.limits is undefined → skipped
+// Validation passes
+```
+
+---
+
+## Common Mistakes
+
+### Forgetting to Enable $data
+
+```javascript
+// ❌
+const jetValidator = new JetValidator({});
+
+// ✅
+const jetValidator = new JetValidator({ $data: true });
+```
+
+Without `$data: true`, the `{ $data: "..." }` object is treated as a regular schema value, not a pointer.
+
+---
+
+### Wrong Pointer Syntax
+
+```javascript
+// ❌ Missing level prefix or leading slash
+{ maximum: { $data: "maxValue" } }
+
+// ✅ Relative pointer
+{ maximum: { $data: "1/maxValue" } }
+
+// ✅ Absolute pointer
+{ maximum: { $data: "/maxValue" } }
+```
+
+---
+
+### Not Validating the Referenced Field
+
+```javascript
+// ❌ maxValue has no type constraint
+{
+  properties: {
+    maxValue: {},
+    value: { type: "number", maximum: { $data: "1/maxValue" } }
+  }
+}
+
+// ✅
+{
+  properties: {
+    maxValue: { type: "number", minimum: 1 },
+    value: { type: "number", maximum: { $data: "1/maxValue" } }
+  },
+  required: ["maxValue"]
+}
+```
+
+---
+
+### Using $data for Static Values
+
+```javascript
+// ❌ Unnecessary
+{
+  properties: {
+    maxAge: { const: 100 },
+    age: { type: "number", maximum: { $data: "1/maxAge" } }
+  }
+}
+
+// ✅
+{
+  properties: {
+    age: { type: "number", maximum: 100 }
+  }
+}
+```
+
+---
+
+### Trying to Escape Subschema Scope
+
+```javascript
+// ❌ product can't reach globalMax from the parent
+{
+  $defs: {
+    item: { properties: { price: { maximum: { $data: "3/globalMax" } } } }
+  },
+  properties: {
+    globalMax: { type: "number" },
+    item: { $ref: "#/$defs/item" }
+  }
+}
+```
+
+See the [scope boundaries section](/advanced/data-keyword#data-in-subschemas) for workarounds.
+
+---
+
+### Tautological Constraint
+
+```javascript
+// ❌ value >= value is always true — constraint does nothing
+{
+  properties: {
+    value: { type: "number", minimum: { $data: "1/value" } }
+  }
+}
+```
+
+If validation seems to always pass, check that your pointer isn't accidentally referencing the field being validated.
+
+---
+
+### Not Handling Missing References
+
+```javascript
+// Schema expects maxValue, but data doesn't provide it
+{ value: 1000 }
+// Constraint skipped → validation passes silently
+
+// Fix: make it required
+{ required: ["maxValue"] }
+```
+
+---
+
+### Deep Relative Pointers
+
+```javascript
+// ❌ Hard to maintain
+{ maximum: { $data: "4/config/max" } }
+
+// ✅ Use absolute pointers for deep paths
+{ maximum: { $data: "/config/max" } }
+```
+
+Relative pointers break when you rename or reorganize any property above the target. Use absolute pointers for anything deeper than 1-2 levels up, and relative pointers for siblings or immediate parents.
+
+---
+
+## Summary
+
+| Topic | Key Point |
+| --- | --- |
+| Enable | `{ $data: true }` required |
+| Absolute pointer | `/path/to/value` from root |
+| Relative pointer | `1/sibling` — levels up + path |
+| Wrong type | Constraint silently skipped |
+| Missing reference | Constraint silently skipped |
+| Subschema scope | `$data` can't escape a `$ref` boundary |
+| Performance | Pointers resolved at compile time — negligible runtime cost |
+
+**Use $data when:** constraints depend on data (multi-tenant limits, dynamic forms, role-based rules, config-driven validation).
+
+**Avoid $data when:** constraints are always the same — just use static values.

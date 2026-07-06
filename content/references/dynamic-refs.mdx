@@ -1,0 +1,341 @@
+---
+title: "Dynamic References ($dynamicRef)"
+description: "$dynamicRef and $dynamicAnchor, scope and anchor resolution rules, and JetValidator's compile-time resolution trade-off."
+---
+
+# Dynamic References — `$dynamicRef`
+
+`$dynamicRef` enables runtime-dependent schema resolution. Unlike `$ref`, which resolves to a fixed target, `$dynamicRef` resolves against `$dynamicAnchor` reference points, following the validation scope.
+
+> **Important:** JetValidator resolves `$dynamicRef` at **compile time** for performance. This handles the vast majority of real-world schemas but not every runtime-dynamic edge case — see [Compile-Time Resolution](#compile-time-resolution) below.
+
+---
+
+## Basic Dynamic Reference
+
+`$dynamicAnchor` marks a dynamic reference point; `$dynamicRef: "#name"` resolves to it:
+
+```typescript
+const schema = {
+  $id: "https://example.com/tree",
+  $dynamicAnchor: "node",
+  type: "object",
+  properties: {
+    value: { type: "string" },
+    children: {
+      type: "array",
+      items: { $dynamicRef: "#node" },
+    },
+  },
+};
+
+const validate = jetValidator.compile(schema);
+
+validate({
+  value: "root",
+  children: [
+    { value: "child1", children: [] },
+    { value: "child2", children: [] },
+  ],
+}); // ✅ recursively validates the tree
+```
+
+### Multiple dynamic anchors
+
+```typescript
+const schema = {
+  $id: "https://example.com/polymorphic",
+  type: "object",
+  properties: {
+    metadata: { $dynamicRef: "#meta" },
+    content:  { $dynamicRef: "#content" },
+  },
+  definitions: {
+    baseMeta: {
+      $dynamicAnchor: "meta",
+      type: "object",
+      properties: { version: { type: "string" } },
+    },
+    baseContent: {
+      $dynamicAnchor: "content",
+      type: "object",
+      properties: { data: { type: "string" } },
+    },
+  },
+};
+```
+
+### External dynamic references
+
+`$dynamicRef` can point to a dynamic anchor in an external schema:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    entity: {
+      $dynamicRef: "https://api.example.com/schemas/polymorphic.json#entity",
+    },
+  },
+};
+
+const validate = await jetValidator.compileAsync(schema);
+```
+
+---
+
+## `$dynamicRef` and Static `$anchor`
+
+`$dynamicRef` can reference a static `$anchor`. With no competing `$dynamicAnchor` in scope, it resolves to the static anchor:
+
+```typescript
+const schema = {
+  $id: "https://example.com/mixed",
+  type: "object",
+  properties: {
+    field: { $dynamicRef: "#staticTarget" },
+  },
+  definitions: {
+    target: {
+      $anchor: "staticTarget",
+      type: "string",
+      minLength: 3,
+    },
+  },
+};
+```
+
+When both exist with the same name, `$dynamicRef` prefers the `$dynamicAnchor`:
+
+```typescript
+const schema = {
+  $id: "https://example.com/priority",
+  type: "object",
+  properties: {
+    field: { $dynamicRef: "#target" },
+  },
+  definitions: {
+    static:  { $anchor: "target", type: "string" },
+    dynamic: { $dynamicAnchor: "target", type: "number" },
+  },
+};
+
+validate({ field: 42 }); // ✅ resolves to $dynamicAnchor (number)
+```
+
+---
+
+## Scope & Order of Resolution
+
+Reference resolution is governed by base URIs (`$id`) and anchor scope. These rules apply to both `$ref` and `$dynamicRef`, differing only in anchor-type priority.
+
+### `$id` Establishes a New Base URI
+
+When a schema contains an `$id`, it establishes a **new base URI** for itself and its descendants — a scope boundary that affects how references resolve.
+
+```typescript
+const schema = {
+  $id: "https://example.com/main",
+  type: "object",
+  properties: {
+    user: { $ref: "#/definitions/user" }, // resolves within main
+  },
+  definitions: {
+    user: {
+      $id: "https://example.com/user", // new base URI
+      type: "object",
+      properties: {
+        name:    { type: "string" },
+        profile: { $ref: "#/definitions/profile" }, // resolves within user's scope
+      },
+      definitions: {
+        profile: {
+          type: "object",
+          properties: { bio: { type: "string" } },
+        },
+      },
+    },
+  },
+};
+```
+
+- The root has base URI `https://example.com/main`
+- The `user` definition has base URI `https://example.com/user`
+- References inside `user` resolve relative to `https://example.com/user`
+- Other parts reference `user` via its full URI: `https://example.com/user` or `https://example.com/user#/definitions/profile`
+
+### Referencing a sub-schema from outside
+
+A sub-schema with an `$id` can be referenced from anywhere using its full URI or a path fragment:
+
+```typescript
+const schema = {
+  $id: "https://example.com/main",
+  type: "object",
+  properties: {
+    user:         { $ref: "https://example.com/user" },
+    userProfile:  { $ref: "https://example.com/user#/definitions/profile" },
+    user2Profile: { $ref: "#/definitions/user/definitions/profile" },
+  },
+  definitions: {
+    user: {
+      $id: "https://example.com/user",
+      type: "object",
+      properties: { name: { type: "string" } },
+      definitions: {
+        profile: {
+          type: "object",
+          properties: { bio: { type: "string" } },
+        },
+      },
+    },
+  },
+};
+```
+
+### Anchor Resolution Searches the Current Base Scope First
+
+Anchors resolve within the current `$id` scope before anything else. Anchors outside the current base scope are **not visible**, even with a matching name:
+
+```typescript
+const schema = {
+  $id: "https://example.com/main",
+  type: "object",
+  properties: {
+    field: { $ref: "#myAnchor" },
+  },
+  definitions: {
+    inMain: {
+      $anchor: "myAnchor", // in the main base scope
+      type: "string",
+      minLength: 5,
+    },
+    subSchema: {
+      $id: "https://example.com/sub", // new base scope
+      definitions: {
+        inSub: {
+          $anchor: "myAnchor", // same name, different scope
+          type: "number",
+        },
+      },
+    },
+  },
+};
+
+// $ref: "#myAnchor" resolves to inMain — the sub scope's anchor is never seen
+```
+
+Because scope boundaries are strict, an anchor in a parent scope is invisible from within a child `$id` scope. A `$ref` that can't find its anchor in the current base scope is left unresolved rather than searching outward.
+
+### Anchor Priority
+
+When both a `$anchor` and a `$dynamicAnchor` share a name in the current base scope:
+
+| Reference Type   | Priority 1 (highest)     | Priority 2                       | If neither in scope            |
+| ---------------- | ------------------------ | -------------------------------- | ------------------------------ |
+| **`$ref`**       | `$anchor` (current base) | `$dynamicAnchor` (current base)  | Left unresolved                |
+| **`$dynamicRef`**| `$dynamicAnchor`         | `$anchor`, then `$dynamicAnchor` in parent scopes | Searches outward for `$dynamicAnchor` |
+
+The key difference: `$ref` stays within its base scope, while `$dynamicRef` continues searching **upward** through parent scopes until it finds a matching `$dynamicAnchor`.
+
+```typescript
+// $ref prefers static $anchor
+const schema = {
+  $id: "https://example.com/main",
+  type: "object",
+  properties: {
+    field: { $ref: "#items" },
+  },
+  definitions: {
+    staticItems:  { $anchor: "items", type: "string" },
+    dynamicItems: { $dynamicAnchor: "items", type: "number" },
+  },
+};
+
+validate({ field: "text" }); // ✅ $anchor wins for $ref
+```
+
+---
+
+## Compile-Time Resolution
+
+While the JSON Schema specification defines `$dynamicRef` as a **runtime** feature, JetValidator resolves it **at compile time** for performance — no runtime anchor lookup, optimized calls and inlining instead of dynamic dispatch.
+
+### What this supports
+
+Compile-time resolution handles the overwhelming majority of real-world schemas:
+
+- All `$ref` patterns
+- Single-path `$dynamicRef`
+- Recursive tree/graph structures
+- Basic polymorphism with fixed anchor resolution
+- External `$dynamicRef`
+- Full Draft-07 and earlier compatibility (Draft-07 has no `$dynamicRef` — it uses static `$ref`)
+
+A well-supported dynamic pattern:
+
+```typescript
+const schema = {
+  $id: "https://example.com/tree",
+  $dynamicAnchor: "node",
+  type: "object",
+  properties: {
+    value: { type: "string" },
+    children: {
+      type: "array",
+      items: { $dynamicRef: "#node" }, // single dynamic resolution path
+    },
+  },
+};
+// ✅ works perfectly
+```
+
+### The edge case it doesn't handle
+
+Compile-time resolution can't handle schemas where `$dynamicRef` must resolve to **different anchors based on runtime data values**:
+
+```typescript
+const schema = {
+  $id: "https://test.json-schema.org/dynamic-ref-with-multiple-paths/main",
+  if: {
+    properties: { kindOfList: { const: "numbers" } },
+    required: ["kindOfList"],
+  },
+  then: { $ref: "numberList" },
+  else: { $ref: "stringList" },
+  $defs: {
+    genericList: {
+      $id: "genericList",
+      properties: {
+        list: { items: { $dynamicRef: "#itemType" } },
+      },
+      $defs: {
+        defaultItemType: { $dynamicAnchor: "itemType" },
+      },
+    },
+    numberList: {
+      $id: "numberList",
+      $defs: { itemType: { $dynamicAnchor: "itemType", type: "number" } },
+      $ref: "genericList",
+    },
+    stringList: {
+      $id: "stringList",
+      $defs: { itemType: { $dynamicAnchor: "itemType", type: "string" } },
+      $ref: "genericList",
+    },
+  },
+};
+```
+
+Here `$dynamicRef: "#itemType"` needs to resolve to a different anchor depending on which `if/then/else` branch the data triggers. Compile-time resolution picks one path and can't switch based on runtime data.
+
+### The trade-off
+
+| Aspect              | Runtime Resolution           | Compile-Time (JetValidator)                    |
+| ------------------- | ---------------------------- | ---------------------------------------------- |
+| Performance         | Slower (lookup overhead)     | Faster (direct calls / inlining)               |
+| Spec compliance     | 100% (if correct)            | ~90% of the test suite; fails runtime edge cases |
+| Code complexity     | Higher (scope tracking)      | Lower (static analysis)                        |
+| Draft-07 support    | N/A (no `$dynamicRef`)       | Full                                            |
+
+For the rare schema that genuinely needs data-dependent resolution, either restructure it so validation paths don't clash (using `if/then/else` with distinct validation functions), or use a fully spec-compliant validator for that specific schema. In practice this is worth avoiding unless truly necessary.

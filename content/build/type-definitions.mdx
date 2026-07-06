@@ -5,7 +5,7 @@ description: "TypeScript type definitions for schemas, validators, errors, and c
 
 # Type Definitions
 
-JetValidator provides comprehensive TypeScript types for schema definitions, validation options, custom keywords, and formats.
+@jetio/validator provides comprehensive TypeScript types for schema definitions, validation options, custom keywords, and formats.
 
 ## Core Types
 
@@ -14,7 +14,7 @@ JetValidator provides comprehensive TypeScript types for schema definitions, val
 The main type for JSON Schema definitions. Supports all JSON Schema Draft 2020-12, 2019-09, and Draft 7 keywords.
 
 ```typescript
-import { SchemaDefinition } from "jetvalidator";
+import { SchemaDefinition } from "@jetio/validator";
 
 const schema: SchemaDefinition = {
   type: "object",
@@ -118,7 +118,7 @@ interface BaseSchema<T = any> {
 
 ### $data Support
 
-JetValidator supports `$data` references for dynamic schema values:
+@jetio/validator supports `$data` references for dynamic schema values:
 
 ```typescript
 type $data = { $data: string };
@@ -141,7 +141,7 @@ const schema: SchemaDefinition = {
 
 ### ValidatorOptions
 
-Configuration options for the JetValidator validator.
+Configuration options for the @jetio/validator validator.
 
 ```typescript
 interface ValidatorOptions {
@@ -268,7 +268,7 @@ validate.errors; // Access errors array
 
 ## Custom Keywords
 
-JetValidator supports four types of custom keywords: `macro`, `compile`, `validate`, and `code`.
+@jetio/validator supports four types of custom keywords: `macro`, `compile`, `validate`, and `code`.
 
 ### KeywordDefinition
 
@@ -340,13 +340,13 @@ type CompileFunction<TValue = unknown, TData = unknown, TRootData = unknown> = (
   parentSchema: SchemaDefinition,
   context: CompileContext,
 ) => CompiledValidateFunction<TData, TRootData>;
- 
+
 interface CompileContext {
   schemaPath: string;
   rootSchema: SchemaDefinition;
   opts: ValidatorOptions;
 }
- 
+
 type CompiledValidateFunction<TData = unknown, TRootData = unknown> = (
   data: TData,
   rootData: TRootData,
@@ -355,7 +355,7 @@ type CompiledValidateFunction<TData = unknown, TRootData = unknown> = (
   | boolean
   | KeywordValidationError
   | Promise<boolean | KeywordValidationError>;
- 
+
 interface ValidationError {
   message: string;
   [key: string]: any;
@@ -384,7 +384,7 @@ type ValidateFunction<
   | boolean
   | KeywordValidationError
   | Promise<boolean | KeywordValidationError>;
- 
+
 interface ValidateDataContext<TRootData = unknown> {
   dataPath: string;
   rootData: TRootData;
@@ -478,7 +478,7 @@ jetvalidator.addKeyword({
 
 ## Custom Formats
 
-JetValidator supports custom format validators.
+@jetio/validator supports custom format validators.
 
 ### FormatDefinition
 
@@ -549,7 +549,7 @@ import {
   SchemaDefinition,
   ValidatorOptions,
   ErrorAttachedValidatorFn,
-} from "jetvalidator";
+} from "@jetio/validator";
 
 const options: ValidatorOptions = {
   allErrors: true,

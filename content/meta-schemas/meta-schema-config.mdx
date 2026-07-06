@@ -1,0 +1,150 @@
+---
+title: "Configuration & API"
+description: "Instance and compilation-level meta-schema configuration, built-in aliases, and the full API reference."
+---
+
+# Meta-Schema Configuration
+
+## Instance-Level Configuration
+
+Configure meta-schema behavior when creating a @jetio/validator instance.
+
+```typescript
+interface ValidatorOptions {
+  validateSchema?: boolean; // Default: true  — enable schema validation
+  metaSchema: string; // Default: ''    — default meta-schema for schemas without $schema
+}
+```
+
+### Enable validation with a default
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07",
+});
+loadDraft07(jetValidator);
+
+const schema = { type: "string" }; // no $schema keyword
+jetValidator.validateSchema(schema); // validates against Draft-07
+```
+
+### Disable validation for production
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: false, // skip validation for performance
+});
+
+// No need to load meta-schemas
+const validate = jetValidator.compile({
+  type: "object",
+  properties: { name: { type: "string" } },
+});
+```
+
+---
+
+## Compilation-Level Configuration
+
+Override instance configuration per compile call.
+
+```typescript
+const jetValidator = new JetValidator({
+  validateSchema: true,
+  metaSchema: "draft-07", // instance default
+});
+loadAllMetaSchemas(jetValidator);
+
+// Instance default (Draft-07)
+const validate1 = jetValidator.compile(schema);
+
+// Override to Draft 2020-12
+const validate2 = jetValidator.compile(schema, {
+  metaSchema: "draft/2020-12",
+});
+
+// Disable validation for this compilation
+const validate3 = jetValidator.compile(schema, {
+  validateSchema: false,
+});
+```
+
+Per-schema strategy — strict for critical schemas, lenient for internal ones:
+
+```typescript
+const userValidator = jetValidator.compile(userSchema, {
+  validateSchema: true,
+  metaSchema: "draft/2020-12",
+  strict: true,
+  allErrors: true,
+});
+
+const internalValidator = jetValidator.compile(internalSchema, {
+  validateSchema: false,
+  coerceTypes: true,
+});
+```
+
+---
+
+## Built-in Aliases
+
+@jetio/validator provides short aliases for meta-schema URIs to cut verbosity. They work everywhere a meta-schema is accepted — the constructor, `validateSchema`, `compile`, and `compileAsync`.
+
+| Short Alias     | Full URI                                       |
+| :-------------- | :--------------------------------------------- |
+| `draft-06`      | `https://json-schema.org/draft-06/schema`      |
+| `draft-07`      | `https://json-schema.org/draft-07/schema`      |
+| `draft/2019-09` | `https://json-schema.org/draft/2019-09/schema` |
+| `draft/2020-12` | `https://json-schema.org/draft/2020-12/schema` |
+
+```typescript
+// These are equivalent:
+jetValidator.validateSchema(schema, {
+  metaSchema: "https://json-schema.org/draft-07/schema",
+});
+jetValidator.validateSchema(schema, {
+  metaSchema: "draft-07", // resolved internally to the full URI
+});
+```
+
+---
+
+## API Reference
+
+**Adding meta-schemas**
+
+| Method          | Signature                                  | Returns | Description            |
+| :-------------- | :----------------------------------------- | :------ | :--------------------- |
+| `addMetaSchema` | `(schema: SchemaDefinition, key?: string)` | `this`  | Register a meta-schema |
+
+**Validating schemas**
+
+| Method                | Signature                                                | Returns                     | Description                                            |
+| :-------------------- | :------------------------------------------------------- | :-------------------------- | :----------------------------------------------------- |
+| `validateSchemaSync`  | `(schema: SchemaDefinition, options?: ValidatorOptions)` | `ValidationResult`          | Validate and compile synchronously with full control               |
+| `validateSchemaAsync` | `(schema: SchemaDefinition, options?: ValidatorOptions)` | `Promise<ValidationResult>` | Validate and compile asynchronously, loading external meta-schemas |
+
+**Configuration options**
+
+| Option           | Type      | Default | Description                                 |
+| :--------------- | :-------- | :------ | :------------------------------------------ |
+| `validateSchema` | `boolean` | `true`  | Enable schema validation before compilation |
+| `metaSchema`     | `string`  | `''`    | Default meta-schema URI or alias            |
+
+**CLI**
+
+| Command                         | Description                          |
+| :------------------------------ | :----------------------------------- |
+| `jet-meta load <version> [dir]` | Download meta-schemas to a directory |
+
+**Loader functions (auto-generated)**
+
+| Function                           | Description                                 |
+| :--------------------------------- | :------------------------------------------ |
+| `loadDraft06(jetValidator)`        | Load JSON Schema Draft-06 meta-schemas      |
+| `loadDraft07(jetValidator)`        | Load JSON Schema Draft-07 meta-schemas      |
+| `loadDraft201909(jetValidator)`    | Load JSON Schema Draft 2019-09 meta-schemas |
+| `loadDraft202012(jetValidator)`    | Load JSON Schema Draft 2020-12 meta-schemas |
+| `loadAllMetaSchemas(jetValidator)` | Load all downloaded meta-schemas            |
