@@ -1,0 +1,153 @@
+---
+title: "Refs & Debugging"
+description: "Control $ref behavior across drafts, inline references for performance, and inspect how schemas resolve and compile."
+---
+
+# Refs & Debugging
+
+## `draft`
+
+**Type:** `'draft2019-09' | 'draft2020-12' | 'draft7' | 'draft6'`
+**Default:** `'draft2019-09'`
+
+Specifies the JSON Schema draft version to use for handling the `$ref` keyword behavior.
+
+```typescript
+const jetValidator = new JetValidator({ draft: "draft7" });
+```
+
+**Draft Behavior:**
+
+- **`draft2019-09` / `draft2020-12`**: All keywords in a schema level run alongside `$ref` and are not ignored.
+- **`draft7` / `draft6`**: When `$ref` is present in a schema, all other keywords at that level are ignored, and only `$ref` is evaluated.
+
+While @jetio/validator doesn't require you to choose an explicit schema language for most operations, this property is necessary due to the different handling of the `$ref` keyword across JSON Schema versions.
+
+**When to use this property:**
+
+- Set to `'draft7'` or `'draft6'` if you need strict JSON Schema Draft 7 or earlier compliance.
+- Keep the default (`'draft2019-09'`) if you want modern schema behavior where keywords coexist with `$ref`.
+- Skip this property entirely if your schemas are designed to only contain the `$ref` keyword at their schema level, with no sibling keywords.
+
+---
+
+## `inlineRefs`
+
+**Type:** `boolean`
+**Default:** `true`
+
+It tells the schema resolver to inline `$ref` and `$dynamicRef` or not.
+
+```typescript
+const jetValidator = new JetValidator({ inlineRefs: true });
+```
+
+**Behavior:**
+
+It inlines references (`$ref`, `$dynamicRef`) whether external or internal. Traditional referenced schemas are compiled to separate functions and the referencing schema calls those functions for validation, but with inline the referenced schema is compiled directly with its pointer thereby inlining the code and avoiding function calls. This drastically improves performance.
+
+References can only be inlined under two conditions:
+
+1. The referenced schema either has no `$ref` or `$dynamicRef`, or the referenced schema has `$ref` or `$dynamicRef` but has been previously inlined (basically it has no refs or it has also been inlined).
+2. It is not a circular reference. Circular references are compiled to functions regardless, since they can't be inlined.
+
+**When to use this property:**
+
+- Set to `false` if you want less code bloat or you care about memory.
+- Keep the default (`true`) if you want pure performance, as function calls in validation add massive overhead.
+
+---
+
+## `debug`
+
+**Type:** `boolean`
+**Default:** `false`
+
+This enables analytics and is particularly useful when refs are inlined.
+
+```typescript
+const jetValidator = new JetValidator({ debug: true });
+```
+
+**Behavior:**
+
+When enabled, the resolver logs a complete analytic of every reference it has handled so far. It gives the total found, total inlined, total not inlined, and also gives real-time logs as it's resolving the schemas. Of course, this affects compilation performance since it has to log to console, so this should only be used when debugging schemas.
+
+**Real-time log information:**
+
+Each log entry shows:
+
+- **Schema ID**: The ID of the schema currently being resolved (or a randomly generated short string if the schema has no ID)
+- **Reference type**: Whether it's a `$ref` or `$dynamicRef`
+- **Reference path**: The JSON pointer path where the reference is located
+- **Target path**: The path the reference points to
+- **Scope**: Whether the target is a local reference (within the same schema) or an external schema
+- **Status**: Whether the reference was inlined or skipped (with reason)
+
+Sample output:
+
+```
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/maxProperties -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/minContains -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/maxContains -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Skipping Inlining $ref at #/properties/minItems (#/$defs/nonNegativeIntegerDefault0 contains refs)
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/maxItems -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Skipping Inlining $ref at #/properties/minLength (#/$defs/nonNegativeIntegerDefault0 contains refs)
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/maxLength -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/type/anyOf/1/items -> #/$defs/simpleTypes
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/type/anyOf/0 -> #/$defs/simpleTypes
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/$defs/nonNegativeIntegerDefault0 -> #/$defs/nonNegativeInteger
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/minProperties -> #/$defs/nonNegativeIntegerDefault0
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/minItems -> #/$defs/nonNegativeIntegerDefault0
+[Resolver - https://json-schema.org/draft/2020-12/meta/validation] Inlining $ref at #/properties/minLength -> #/$defs/nonNegativeIntegerDefault0
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $ref at #/allOf/6 (https://json-schema.org/draft/2020-12/meta/content# contains refs) - (external schema)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $ref at #/allOf/3 (https://json-schema.org/draft/2020-12/meta/validation# contains refs) - (external schema)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $ref at #/allOf/2 (https://json-schema.org/draft/2020-12/meta/unevaluated# contains refs) - (external schema)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $ref at #/allOf/1 (https://json-schema.org/draft/2020-12/meta/applicator# contains refs) - (external schema)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $ref at #/allOf/0 (https://json-schema.org/draft/2020-12/meta/core# contains refs) - (external schema)
+[Resolver] Inlining $ref at #/properties/$recursiveRef -> https://json-schema.org/draft/2020-12/meta/core#/$defs/uriReferenceString - (external schema)
+[Resolver] Inlining $ref at #/properties/$recursiveAnchor -> https://json-schema.org/draft/2020-12/meta/core#/$defs/anchorString - (external schema)
+[Resolver] Inlining $ref at #/properties/dependencies/additionalProperties/anyOf/1 -> https://json-schema.org/draft/2020-12/meta/validation#/$defs/stringArray - (external schema)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $dynamicRef at #/properties/dependencies/additionalProperties/anyOf/0 (# contains refs)
+[Resolver - https://json-schema.org/draft/2020-12/schema] Skipping Inlining $dynamicRef at #/properties/definitions/additionalProperties (# contains refs)
+[Resolver - stit0c] Skipping Inlining $ref at # (https://json-schema.org/draft/2020-12/schema# contains refs) - (external schema)
+
+[Resolver] Inlining Summary:
+  Total references: 74
+  Inlined: 43 (58.1%)
+  Skipped: 31 (contain circular)
+  Function calls saved: ~43
+```
+
+**Note:** References without the `(external schema)` tag are local references (within the same schema), even if the target path contains a URL. Short random strings like `stit0c` are automatically generated IDs for schemas that don't have an explicit ID.
+
+**When to use this property:**
+
+- Set to `true` if you want real-time updates on how your references are being resolved, in what order, which were successful, and whether they're local or external, as well as overall stats in the process.
+
+---
+
+## `logFunction`
+
+**Type:** `boolean`
+**Default:** `false`
+
+When enabled, logs the compiled schema function to the console on each compilation.
+
+```typescript
+const jetValidator = new JetValidator({ logFunction: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+  },
+});
+
+// Alternative method
+console.log(validate.toString());
+```
+
+Use this when you want to examine the generated validation functions or extract them for external use.
+
+> **`logFunction` is not a standalone build.** It's a debugging aid for seeing what was generated. The dumped function still relies on runtime dependencies injected at compile time — inlined format patterns and custom keywords won't be self-contained in the output. For a function that runs without the library at runtime, use [`generateStandalone()`](/standalone/basics) instead.

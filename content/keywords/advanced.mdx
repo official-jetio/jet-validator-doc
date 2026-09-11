@@ -74,7 +74,6 @@ Always handle null/undefined and type mismatches explicitly if you haven't set `
 ```typescript
 validator.addKeyword({
   keyword: "safeLength",
-  type: "string",
   schemaType: "number",
   validate: (schemaValue, data) => {
     if (data === null || data === undefined) return { message: "Value is required" };

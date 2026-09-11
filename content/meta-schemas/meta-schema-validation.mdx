@@ -103,9 +103,9 @@ console.log(result.errors);
 //   {
 //     keyword: 'type',
 //     dataPath: '/age/minimum',
-//     schemaPath: '#////',
-//     message: 'should be number',
-//     expected: 'a valid number'
+//     schemaPath: '#',
+//     message: 'invalid type',
+//     expected: 'number'
 //   }
 // ]
 console.log(result.valid); // false
@@ -154,7 +154,7 @@ const schema = {
 const result = jetValidator.validateSchemaSync(schema);
 console.error(result.errors);
   // {
-  //    dataPath: "/",
+  //    dataPath: "",
   //    schemaPath: "#",
   //    notFound: true, // a flag to check
   //    keyword: "https://json-schema.org/draft/2020-12/schema",
@@ -180,7 +180,7 @@ try {
   const validate = jetValidator.compile(invalidSchema);
 } catch (error) {
   console.error(error.message);
-  // "Schema validation failed. Cannot compile invalid schema."
+  // validation errors
 }
 ```
 
@@ -202,8 +202,9 @@ try {
 } catch (error) {
   console.error(error);
   // {
-  //    dataPath: "/",
+  //    dataPath: "",
   //    schemaPath: "#",
+  //    notFound: true,
   //    keyword: "https://json-schema.org/draft/2020-12/schema",
   //    message: "metaSchema not found",
   //  }

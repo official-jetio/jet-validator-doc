@@ -55,10 +55,10 @@ console.log(validateString("hi")); // false
 console.log(validateString.errors);
 // [{
 //     keyword: 'minLength',
-//     dataPath: '/',
+//     dataPath: '',
 //     schemaPath: '#',
-//     expected: 'at least 3 characters',
-//     message: 'should NOT be shorter than 3 characters',
+//     expected: 3,
+//     message: 'must have at least 3 characters',
 //   }]
 ```
 
@@ -199,7 +199,7 @@ console.log(validateStrict(data));           // false
 console.log(validateStrict.errors.length);   // 1 (fails on first error)
 
 console.log(validateLenient(data));          // false
-console.log(validateLenient.errors.length);  // 2 (all errors; age coerced to 25)
+console.log(validateLenient.errors.length);  // 1 (all errors; age coerced to 25, name failed minLength)
 ```
 
 ### Caching

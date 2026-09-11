@@ -1,0 +1,63 @@
+---
+title: "Advanced Options"
+description: "Enable $data references for dynamic constraints and asynchronous validation for custom formats and keywords."
+---
+
+# Advanced Options
+
+## `$data`
+
+**Type:** `boolean`
+**Default:** `false`
+
+Enables `$data` references in schemas, allowing validation constraints to dynamically reference values from the data being validated. Instead of static constraint values, you can use runtime data values.
+
+For complete documentation on `$data` references, see the [$data References](/advanced/data-keyword) section.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ $data: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    minPrice: { type: "number" },
+    maxPrice: { type: "number" },
+    currentPrice: {
+      type: "number",
+      minimum: { $data: "1/minPrice" }, // Must be >= minPrice
+      maximum: { $data: "1/maxPrice" }, // Must be <= maxPrice
+    },
+  },
+});
+
+validate({ minPrice: 10, maxPrice: 100, currentPrice: 50 }); // ✅ Valid
+validate({ minPrice: 10, maxPrice: 100, currentPrice: 5 }); // ❌ Invalid
+```
+
+## `async`
+
+**Type:** `boolean`
+**Default:** `false`
+
+The `async` property enables **asynchronous validation**.
+
+When set to `true`, the compiled validation functions become **asynchronous** and return a **`Promise`**. This is necessary when your schema uses **custom formats** or **keywords** that perform asynchronous operations (e.g., fetching data, database lookups).
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    email: { type: "string", format: "async-string" },
+  },
+});
+
+await validate({ email: "email" }); // ✅ Valid
+validate({ email: "email" }); // ❌ Returns Promise.
+
+// an alternative is
+validate({ email: "email" }).then((result) => {});
+```

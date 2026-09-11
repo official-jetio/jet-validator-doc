@@ -1,0 +1,133 @@
+---
+title: "Format API Reference"
+description: "Format management methods, direct testing helpers, type definitions, and troubleshooting."
+---
+
+# Format API Reference
+
+Methods for registering, inspecting, and testing formats. For configuration see [Format Configuration](/formats/configuration), and for defining validators see [Custom Formats](/formats/custom).
+
+## Managing Formats
+
+### `addFormat`
+
+```typescript
+addFormat(name: string, definition: FormatDefinition): void
+```
+
+Registers a custom format. Throws if a format with that name already exists.
+
+```typescript
+jetValidator.addFormat("slug", /^[a-z0-9-]+$/);
+```
+
+### `removeFormat`
+
+```typescript
+removeFormat(name: string): void
+```
+
+Removes a format. Throws if it is not registered.
+
+```typescript
+jetValidator.removeFormat("slug");
+```
+
+### `isFormatRegistered`
+
+```typescript
+isFormatRegistered(name: string): boolean
+```
+
+### `getFormat`
+
+```typescript
+getFormat(name: string): FormatDefinition | undefined
+```
+
+### `getRegisteredFormats`
+
+```typescript
+getRegisteredFormats(): string[]
+```
+
+Returns the names of all registered formats.
+
+### `getAllFormats`
+
+```typescript
+getAllFormats(): Record<string, FormatDefinition>
+```
+
+Returns a copy of every format definition.
+
+## Testing Formats Directly
+
+### `testFormat`
+
+```typescript
+testFormat(value: string, format: string): boolean | Promise<boolean>
+```
+
+Runs a value against a format validator and returns the boolean result (or a promise for an async format).
+
+```typescript
+jetValidator.testFormat("test@example.com", "email"); // true
+await jetValidator.testFormat("new@example.com", "unique-email");
+```
+
+### `validateFormat`
+
+```typescript
+validateFormat(value: string, format: string): { valid: boolean; errors?: { message: string } }
+```
+
+Runs a value against a format and returns a result object. On failure, `errors.message` describes it:
+
+```typescript
+jetValidator.validateFormat("invalid-email", "email");
+// { valid: false, errors: { message: "Failed to validate format 'email'" } }
+
+jetValidator.validateFormat("a@b.co", "email");
+// { valid: true }
+```
+
+## Types
+
+### `FormatDefinition`
+
+```typescript
+type FormatDefinition =
+  | RegExp
+  | ((value: any) => boolean)
+  | {
+      validate: RegExp | ((value: any) => boolean | Promise<boolean>);
+      type?: string | string[];
+      async?: boolean;
+    };
+```
+
+### Format-related `ValidatorOptions`
+
+```typescript
+interface ValidatorOptions {
+  formatMode?: "full" | "fast" | false; // which built-in formats load (default "full")
+  validateFormats?: boolean;            // whether formats are checked (default true)
+  async?: boolean;                      // support async validators (default false)
+  formats?: string[];                   // format names exposed to $data lookups
+  // ...other options
+}
+```
+
+## Troubleshooting
+
+**A format is not being checked.** Confirm `validateFormats` is `true`, that the format is registered (`isFormatRegistered`), and that the value's type matches the format's declared type (an untyped format only runs against strings).
+
+**An async format is not working.** Confirm the definition has `async: true`, that `async: true` was passed to `compile` or the constructor, and that you are awaiting the result.
+
+**`addFormat` throws "already exists".** Remove the existing format first:
+
+```typescript
+jetValidator.removeFormat("email");
+jetValidator.addFormat("email", /custom-pattern/);
+```

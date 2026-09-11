@@ -212,11 +212,16 @@ const schema = {
 };
 
 try {
-  jetValidator.validateSchema(schema);
+  jetValidator.compile(schema);
 } catch (error) {
   console.error(error.message);
-  // Meta-schema "draft-06" is not loaded.
-  // Load it using: loadDraft06(jetValidator)
+  // {
+  //    dataPath: "",
+  //    schemaPath: "#",
+  //    notFound: true, // a flag to check
+  //    keyword: "https://json-schema.org/draft-06/schema",
+  //    message: "metaSchema not found",
+  //  }
 }
 ```
 

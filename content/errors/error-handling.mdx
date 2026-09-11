@@ -7,8 +7,6 @@ description: "Inspect validation errors, hierarchical error trees, and utility m
 
 ### Error Object Structure
 
-typescript
-
 ```typescript
 interface ValidationResult {
   valid: boolean;
@@ -28,8 +26,6 @@ interface ValidationError {
 ### Basic Error Examples
 
 **Type validation error:**
-
-typescript
 
 ```typescript
 const jetValidator = new JetValidator();
@@ -53,7 +49,7 @@ console.log(validate.errors);
 
 **Minimum validation error:**
 
-typescript
+
 
 ```typescript
 const validate = jetValidator.compile({
@@ -76,7 +72,7 @@ console.log(validate.errors);
 
 **Format validation error:**
 
-typescript
+
 
 ```typescript
 const validate = jetValidator.compile({
@@ -107,7 +103,7 @@ console.log(validate.errors);
 
 Logs error in a clean readable format:
 
-typescript
+
 
 ```typescript
 const jetValidator = new JetValidator({ allErrors: true });
@@ -170,7 +166,7 @@ jetValidator.logErrors(validate.errors);
 
 Groups errors by field path:
 
-typescript
+
 
 ```typescript
 const result = validate({ country: "hi", postalCode: "yh" });
@@ -193,7 +189,7 @@ console.log(fieldErrors);
 
 This is particularly useful for displaying errors in forms:
 
-typescript
+
 
 ```typescript
 const fieldErrors = jetValidator.getFieldErrors(validate.errors);
@@ -208,7 +204,7 @@ Object.entries(fieldErrors).forEach(([field, messages]) => {
 
 Formats errors as a human-readable string:
 
-typescript
+
 
 ```typescript
 const result = validate({ country: "hi", postalCode: "yh" });
@@ -249,7 +245,7 @@ console.log(
 
 Extracts the field name from a data path:
 
-typescript
+
 
 ```typescript
 jetValidator.getFieldFromPath("/user/profile/email");
@@ -266,7 +262,6 @@ jetValidator.getFieldFromPath("/");
 
 Converts JSON pointer path to dot notation:
 
-typescript
 
 ```typescript
 jetValidator.getFullFieldPath("/user/profile/email");

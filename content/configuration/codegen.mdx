@@ -1,0 +1,44 @@
+---
+title: "Code Generation Options"
+description: "Reduce standalone output bloat by looping enum and required checks instead of inlining them."
+---
+
+# Code Generation Options
+
+These options control how @jetio/validator emits `enum` and `required` checks in the generated function. Both exist to reduce output bloat when producing [standalone validators](/standalone/basics) — inlining every comparison into a chain of `if` statements is fast, but it can make the generated code large.
+
+## `loopEnum`
+
+**Type:** `number`
+**Default:** `200`
+
+When the number of enum values exceeds this threshold, they are looped instead of being inlined directly into `if` statements.
+
+```typescript
+const jetValidator = new JetValidator({ loopEnum: 5 });
+const validate = jetValidator.compile({
+  enum: [], // if more than 5, a for loop is used; otherwise inlined, e.g. if (a !== n || a !== c)
+});
+```
+
+Use this when you want to reduce the bloat of the generated functions.
+
+> **Exception:** when the `$data` keyword is used, enums are automatically looped regardless of this threshold.
+
+## `loopRequired`
+
+**Type:** `number`
+**Default:** `200`
+
+When the number of required properties exceeds this threshold, they are looped instead of being inlined directly into `if` statements.
+
+```typescript
+const jetValidator = new JetValidator({ loopRequired: 5 });
+const validate = jetValidator.compile({
+  required: [], // if more than 5, a for loop is used; otherwise inlined, e.g. if (a !== n || a !== c)
+});
+```
+
+Use this when you want to reduce the bloat of the generated functions.
+
+> **Exception:** when the `$data` keyword is used, required properties are automatically looped regardless of this threshold.

@@ -11,7 +11,7 @@ description: "How @jetio/validator picks which meta-schema to validate against: 
 ┌─────────────────────────────────────────┐
 │  PRIORITY 1 (HIGHEST)                    │
 │  Method-Level Override                   │
-│  validateSchema(schema, { metaSchema })  │
+│  validateSchemaSync(schema, { metaSchema })  │
 └─────────────────────────────────────────┘
               ↓ (if not specified)
 ┌─────────────────────────────────────────┐
@@ -40,7 +40,7 @@ const schema = {
 };
 
 // Validate against Draft 2020-12 instead
-const isValid = jetValidator.validateSchema(schema, {
+const isValid = jetValidator.validateSchemaSync(schema, {
   metaSchema: "draft/2020-12", // Priority 1 overrides Priority 2
 });
 ```
@@ -51,7 +51,7 @@ Testing a schema across every draft:
 const drafts = ["draft-06", "draft-07", "draft/2019-09", "draft/2020-12"];
 
 drafts.forEach((draft) => {
-  const isValid = jetValidator.validateSchema(mySchema, { metaSchema: draft });
+  const isValid = jetValidator.validateSchemaSync(mySchema, { metaSchema: draft }).valid;
   console.log(`${draft}: ${isValid ? "✓ Compatible" : "✗ Incompatible"}`);
 });
 ```
@@ -73,8 +73,8 @@ const draft2020Schema = {
   type: "string",
 };
 
-jetValidator.validateSchema(draft07Schema); // uses Draft-07
-jetValidator.validateSchema(draft2020Schema); // uses Draft 2020-12
+jetValidator.validateSchemaSync(draft07Schema); // uses Draft-07
+jetValidator.validateSchemaSync(draft2020Schema); // uses Draft 2020-12
 ```
 
 Different drafts can coexist in the same application — each schema validates against its own declared version:
@@ -93,8 +93,8 @@ const modernUserSchema = {
   unevaluatedProperties: false, // 2020-12 keyword
 };
 
-jetValidator.validateSchema(legacyUserSchema); // Draft-06
-jetValidator.validateSchema(modernUserSchema); // 2020-12
+jetValidator.validateSchemaSync(legacyUserSchema); // Draft-06
+jetValidator.validateSchemaSync(modernUserSchema); // 2020-12
 ```
 
 ---
@@ -115,7 +115,7 @@ const schema = {
   minLength: 5,
 };
 
-jetValidator.validateSchema(schema); // falls back to Draft-07
+jetValidator.validateSchemaSync(schema); // falls back to Draft-07
 ```
 
 Separate instances can hold different defaults — one for legacy schemas, one for modern:
@@ -127,8 +127,8 @@ loadDraft06(legacyValidator);
 const modernValidator = new JetValidator({ metaSchema: "draft/2020-12" });
 loadDraft202012(modernValidator);
 
-legacyValidator.validateSchema(oldSchema);
-modernValidator.validateSchema(newSchema);
+legacyValidator.validateSchemaSync(oldSchema);
+modernValidator.validateSchemaSync(newSchema);
 ```
 
 ---
@@ -149,13 +149,13 @@ const draft07Schema = {
 };
 
 // No $schema, no override → Priority 3 (draft-06)
-jetValidator.validateSchema(noSchemaKeyword);
+jetValidator.validateSchemaSync(noSchemaKeyword);
 
 // Has $schema, no override → Priority 2 (draft-07)
-jetValidator.validateSchema(draft07Schema);
+jetValidator.validateSchemaSync(draft07Schema);
 
 // Has $schema, with override → Priority 1 wins (draft-06)
-jetValidator.validateSchema(draft07Schema, {
+jetValidator.validateSchemaSync(draft07Schema, {
   metaSchema: "draft-06",
 });
 ```

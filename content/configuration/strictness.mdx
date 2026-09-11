@@ -1,0 +1,184 @@
+---
+title: "Strictness"
+description: "Enforce stricter validation than the JSON Schema standard: finite numbers, declared required properties, explicit types, and well-formed schemas."
+---
+
+# Strictness
+
+> **Note:** When strict mode rejects a schema, @jetio/validator does **not** stop at the first offending keyword. It walks the whole schema, collects every strictness violation it finds, and then throws once with the full set, so a single throw can report all the problems at once.
+
+## `strict`
+
+**Type:** `boolean`
+**Default:** `true`
+
+Master switch that enables all strict validation modes. Equivalent to setting `strictNumbers: true`, `strictRequired: true`, `strictSchema: true`, and `strictTypes: true`.
+
+```typescript
+const jetValidator = new JetValidator({ strict: true });
+// Equivalent to:
+// {
+//   strictNumbers: true,
+//   strictRequired: true,
+//   strictTypes: true,
+//   strictSchema: true
+// }
+
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    count: {}, // Error (strictTypes)
+  },
+  required: ["hello"], // Error (strictRequired)
+});
+
+validate({ count: NaN }); // ❌ Invalid (strictNumbers)
+validate({ count: undefined }); // ❌ Invalid (strictRequired)
+validate({ count: 42 }); // ✅ Valid
+```
+
+---
+
+## `strictNumbers`
+
+**Type:** `boolean`
+**Default:** `false`
+
+When enabled, rejects non-finite numbers: `NaN`, `Infinity`, and `-Infinity` and enforce strict floating point precision handling when using the `multipleOf` keyword.
+
+```typescript
+const jetValidator = new JetValidator({ strictNumbers: true });
+const validate = jetValidator.compile({ type: "number" });
+
+validate(42); // ✅ Valid
+validate(3.14); // ✅ Valid
+validate(NaN); // ❌ Invalid
+validate(Infinity); // ❌ Invalid
+validate(-Infinity); // ❌ Invalid
+```
+
+**Without `strictNumbers`:**
+
+```typescript
+const jetValidator = new JetValidator({ strictNumbers: false });
+const validate = jetValidator.compile({ type: "number" });
+
+validate(NaN); // ✅ Valid (NaN is technically a number type)
+validate(Infinity); // ✅ Valid
+```
+
+---
+
+## `strictRequired`
+
+**Type:** `boolean`
+**Default:** `false`
+
+When enabled, throws an error if a required property is not defined in `properties`.
+
+```typescript
+const jetValidator = new JetValidator({ strictRequired: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {},
+  required: ["name"], // Throws Error
+});
+```
+
+**Without `strictRequired`:**
+
+```typescript
+const jetValidator = new JetValidator({ strictRequired: false });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {},
+  required: ["name"],
+});
+
+validate({ name: "" }); // works fine
+```
+
+This is useful when distinguishing between explicitly defined `properties` matters in your application.
+
+---
+
+## `strictTypes`
+
+**Type:** `boolean | "log"`
+**Default:** `false`
+
+Enforces strict type checking beyond the JSON Schema standard, or logs type violations without failing validation.
+
+```typescript
+// Strict mode - fails validation
+const jetValidator = new JetValidator({ strictTypes: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    age: {}, // Throws error, type: is required
+  },
+});
+
+// Log mode - validates but logs warnings
+const jetValidator2 = new JetValidator({ strictTypes: "log" });
+const validate2 = jetValidator2.compile({
+  type: "object",
+  properties: {
+    age: {}, // Logs error without disrupting the application
+  },
+});
+```
+
+---
+
+## `strictSchema`
+
+**Type:** `boolean`
+**Default:** `true`
+
+Makes sure there are no unknown keywords present in the schema, correct types are provided, and that all keywords match the right type if available.
+
+```typescript
+const jetValidator = new JetValidator({ strictSchema: true });
+
+// Invalid schema - will throw error
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    age: { hello: "invalid" }, // ❌ Not a valid JSON keyword
+  },
+});
+// Throws: Invalid schema
+
+const validate2 = jetValidator.compile({
+  type: "object",
+  properties: {
+    age: { type: "invalid-type" }, // ❌ Not a valid JSON Schema type
+  },
+});
+// Throws: Invalid schema
+
+const validate3 = jetValidator.compile({
+  type: "number", // ❌ keyword properties is incompatible with type number
+  properties: {
+    age: { type: "string" },
+  },
+});
+// Throws: Invalid schema
+
+const validate4 = jetValidator.compile({
+  type: ["object", "string"],
+  minLength: 5,
+  properties: {
+    age: { type: "number" },
+  },
+});
+// Schema is valid.
+```
+
+Disable this for faster compilation if you're certain your schemas are valid:
+
+```typescript
+const jetValidator = new JetValidator({ strictSchema: false });
+// Skips schema validation, compiles faster
+```

@@ -23,7 +23,7 @@ validate(
 | `data`    | `any`                         | Yes      | The data to validate                                       |
 | `config`  | `ValidatorOptions`            | No       | Configuration overrides for this validation                |
 
-**Returns:** `ValidationResult` — `{ valid: boolean, errors: [] }`
+**Returns:** `ValidationResult` — `{ valid: boolean, errors: null | ValidationError[] }`
 
 Internally calls `compile()`, runs the validator immediately, and returns the result synchronously. Use it for schemas without remote references or async keywords.
 
@@ -47,14 +47,14 @@ const result = jetValidator.validate(schema, {
 });
 
 console.log(result.valid);  // true
-console.log(result.errors); // []
+console.log(result.errors); // null
 ```
 
 ### Validation with errors
 
 ```typescript
 const result = jetValidator.validate(
-  { type: "string", minLength: 5, format: "email" },
+  { type: "string", minLength: 6, format: "email" },
   "a@b.c"
 );
 
@@ -62,10 +62,10 @@ console.log(result.valid); // false
 console.log(result.errors);
 // [
 //   {
-//     dataPath: '/',
-//     schemaPath: '#/minLength',
+//     dataPath: '',
+//     schemaPath: '#',
 //     keyword: 'minLength',
-//     message: 'must NOT have fewer than 5 characters'
+//     message: 'must have at least 6 characters.'
 //   }
 // ]
 ```
@@ -120,7 +120,7 @@ console.log(result1.valid); // true
 
 const result2 = jetValidator.validate(false, { anything: "goes not" });
 console.log(result2.valid); // false
-console.log(result2.errors[0].message); // 'boolean schema is false'
+console.log(result2.errors[0].message); // 'schema is false'
 ```
 
 ---
@@ -239,6 +239,8 @@ try {
 | Validate multiple times          | `compile()` then reuse      | Amortize compilation cost   |
 | Async validation once            | `validateAsync()`           | Single async validation     |
 | Async validation multiple times  | `compileAsync()` then reuse | Amortize async compilation  |
+
+>Whether you use compile or validate, the resulting function is cached when the option is enabled. The only difference is that with validate you pass the schema (or a reference to it) on every call, and it's resolved internally each time, which adds overhead at validation time.
 
 For one-off validations, call `validate` directly. For repeated validations, compile once and reuse:
 

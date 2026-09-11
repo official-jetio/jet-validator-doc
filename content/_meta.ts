@@ -1,14 +1,17 @@
 const meta = {
   index: "Introduction",
-  "getting-started": "Getting Started",
-  "whats-new-2": "Upgrading to 2.0",
+  "whats-new-3": "Upgrading to 3.0",
+  configuration: "Getting Started & Configuration",
   core: "Core API",
   "meta-schemas": "Meta-Schema System",
   errors: "Errors",
   references: "References & Composition",
-  advanced: "Advanced",
-  extensibility: "Async & Extensibility",
-  build: "Build & Reference",
+  advanced: "$data & elseIf",
+  formats: "Formats",
+  keywords: "Custom Keywords",
+  "async-effects": "Async & Effectful Validation",
+  standalone: "Standalone Code Generation",
+  "type-definitions": "Type Definitions",
 };
 
 export default meta;

@@ -3,11 +3,15 @@ title: "Dynamic References ($dynamicRef)"
 description: "$dynamicRef and $dynamicAnchor, scope and anchor resolution rules, and JetValidator's compile-time resolution trade-off."
 ---
 
+import { Callout } from 'nextra/components'
+
 # Dynamic References — `$dynamicRef`
 
 `$dynamicRef` enables runtime-dependent schema resolution. Unlike `$ref`, which resolves to a fixed target, `$dynamicRef` resolves against `$dynamicAnchor` reference points, following the validation scope.
 
-> **Important:** JetValidator resolves `$dynamicRef` at **compile time** for performance. This handles the vast majority of real-world schemas but not every runtime-dynamic edge case — see [Compile-Time Resolution](#compile-time-resolution) below.
+<Callout type="warning">
+JetValidator resolves `$dynamicRef` at **compile time** for performance. This handles the vast majority of real-world schemas but not every runtime-dynamic edge case — see [Compile-Time Resolution](#compile-time-resolution) below.
+</Callout>
 
 ---
 

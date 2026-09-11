@@ -1,0 +1,188 @@
+---
+title: "Error Handling"
+description: "Collect all errors or fail fast, customize error messages, and include failing values with verbose output."
+---
+
+# Error Handling
+
+## `allErrors`
+
+**Type:** `boolean`
+**Default:** `false`
+
+Controls whether validation stops at the first error (fail-fast) or collects all validation errors.
+
+**Fail-fast mode** (default):
+
+```typescript
+const jetValidator = new JetValidator({ allErrors: false });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+  },
+});
+
+validate({ name: 123, age: "invalid" }); // false
+console.log(validate.errors);
+// Returns only the first error:
+//   [{
+//     dataPath: '/name',
+//     schemaPath: '#/properties/name',
+//     keyword: 'type',
+//     expected: 'string',
+//     message: 'Invalid type: expected string'
+//   }]
+```
+
+**All errors mode:**
+
+```typescript
+const jetValidator = new JetValidator({ allErrors: true });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+  },
+});
+
+validate({ name: 123, age: "invalid" }); // false
+console.log(validate.errors);
+// Returns all validation errors:
+
+//   [
+//     {
+//       dataPath: '/name',
+//       schemaPath: '#/properties/name',
+//       keyword: 'type',
+//       expected: 'string',
+//       message: 'Invalid type: expected string'
+//     },
+//     {
+//       dataPath: '/age',
+//       schemaPath: '#/properties/age',
+//       keyword: 'type',
+//       expected: 'number',
+//       message: 'Invalid type: expected number'
+//     }
+//   ]
+```
+
+**Use `allErrors: true` when:**
+
+- Building forms that need to show all validation errors at once
+- Creating API responses that list all validation issues
+- Debugging schemas during development
+
+**Use `allErrors: false` when:**
+
+- Performance is critical and early exit is beneficial
+- You only need to know if data is valid or not
+
+---
+
+## `errorMessage`
+
+**Type:** `string | object`
+**Default:** `undefined`
+
+Allows setting a custom error message, overriding default compiler error messages.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ errorMessage: true });
+const validate = jetValidator.compile({
+  type: "string",
+});
+validate(1);
+console.log(validate.errors); // [ { message: 'Invalid type.' } ]
+
+const validate2 = jetValidator.compile({
+  type: "string",
+  errorMessage: "Received value must definitely be string",
+});
+validate2(1);
+console.log(validate2.errors); // [ { message: 'Received value must definitely be string' } ]
+```
+For complete documentation on `errorMessage`, see the [Custom error messages guide](/errors/error-messages-basics) section.
+
+---
+
+## `verbose`
+
+**Type:** `boolean` | `'value'` | `'path'`
+**Default:** `false`
+
+When set to true it:
+- Includes the actual data value that failed validation in error objects. Useful for debugging.
+- Shows referenced schema full resolution path e.g 
+```
+Error { schemaPath: "#/$ref/https://json-schema.org/draft/2020-12/schema/allOf/0/$ref/https://json-schema.org/draft/2020-12/meta/core" };
+```
+while when set to `'value'` it only adds the value to the error object and when set to `'path'` it adds the full `$ref` path.
+
+```typescript
+const jetValidator = new JetValidator({ verbose: 'value' });
+// or
+// const jetValidator = new JetValidator({ verbose: true });
+
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    age: { type: "number", minimum: 18 },
+  },
+});
+
+validate({ age: 15 }); // false
+console.log(validate.errors);
+// Error includes the actual value and keyword value:
+
+//   [{
+//     dataPath: '/age',
+//     schemaPath: '#/properties/age', 
+//     keyword: 'minimum',
+//     expected: '18',
+//     value: 15,  // ← Actual value included
+//     message: 'Value must be at least 18'
+//   }]
+```
+
+```typescript
+const jetValidator = new JetValidator({ verbose: 'path' });
+// OR
+// const jetValidator = new JetValidator({ verbose: true });
+const validate = jetValidator.compile({
+  title: "UserSchema",
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    home_garden: { $ref: "#/$defs/greenhouse" },
+  },
+
+  $defs: {
+    greenhouse: {
+      type: "object",
+      properties: {
+        plant_count: { type: "integer" },
+      },
+    },
+  },
+};);
+
+validate({ home_garden: { plant_count: "" } }); // false
+console.log(validate.errors);
+// Error includes the actual value and keyword value:
+
+//   [{
+//     dataPath: '/home_garden/plant_count',
+//     schemaPath: '#/properties/home_garden/$ref/#/$defs/greenhouse/properties/plant_count', 
+//     keyword: 'type',
+//     expected: 'integer',
+//     message: 'must be an integer'
+//   }]
+```
+
+Be cautious with `verbose: true` when validating sensitive data (passwords, tokens, etc.) as error logs will contain actual values.

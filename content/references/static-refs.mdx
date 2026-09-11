@@ -11,7 +11,7 @@ The `$ref` keyword references another schema or schema fragment, enabling reuse,
 
 ## Full Paths in Errors
 
-JetValidator returns the complete path to a referenced schema in errors — from the origin all the way to the failure point:
+JetValidator returns the complete path to a referenced schema in errors — from the origin all the way to the failure point when `verbose` is set to `true` or `'path'`:
 
 ```typescript
 const error = {

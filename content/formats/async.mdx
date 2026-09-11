@@ -1,0 +1,94 @@
+---
+title: "Async Formats"
+description: "Defining and using asynchronous format validators for I/O-backed checks."
+---
+
+import { Callout } from 'nextra/components'
+
+# Async Formats
+
+Async formats let a format perform I/O, such as a database lookup or an API call, during validation. See [Format Configuration](/formats/configuration) for the `async` option and [Custom Formats](/formats/custom) for the base definition styles.
+
+## Defining an Async Format
+
+Mark the format `async: true` and give it an async `validate`:
+
+```typescript
+jetValidator.addFormat("unique-email", {
+  type: "string",
+  async: true,
+  validate: async (value: string) => {
+    const exists = await checkEmailInDatabase(value);
+    return !exists;
+  },
+});
+```
+
+## Using Async Formats
+
+A validator that contains an async format must itself be compiled in async mode and awaited.
+
+### Global async configuration
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+
+const validate = jetValidator.compile({ type: "string", format: "unique-email" });
+const result = await validate("new@example.com");
+```
+
+### Per-schema async configuration
+
+```typescript
+const jetValidator = new JetValidator({ async: false });
+
+const validate = jetValidator.compile(
+  { type: "string", format: "unique-email" },
+  { async: true },
+);
+const result = await validate("new@example.com");
+```
+
+### Overriding the instance setting for a sync schema
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+
+const validate = jetValidator.compile(
+  { type: "string", format: "email" },
+  { async: false },
+);
+const result = validate("test@example.com"); // no await
+```
+
+## Mixing Sync and Async
+
+Both can coexist in one instance. A schema is compiled async only when it needs to be:
+
+```typescript
+const jetValidator = new JetValidator();
+
+jetValidator.addFormat("email", /^[^\s@]+@[^\s@]+\.[^\s@]+$/);
+jetValidator.addFormat("unique-email", {
+  type: "string",
+  async: true,
+  validate: async (value: string) => await isUnique(value),
+});
+
+const validateEmail = jetValidator.compile({ type: "string", format: "email" });
+validateEmail("test@example.com"); // sync
+
+const validateUnique = jetValidator.compile(
+  { type: "string", format: "unique-email" },
+  { async: true },
+);
+await validateUnique("test@example.com"); // async
+```
+
+## Trade-offs
+
+Async validation enables checks that need I/O, but it is slower than synchronous validation, requires `await` on every call, and cannot be used in a synchronous context.
+
+<Callout type="info">
+  Enable `async` only where a format genuinely needs I/O. Keep simple checks (regex, arithmetic) synchronous, and consider caching the results of expensive async lookups.
+</Callout>

@@ -20,23 +20,27 @@ Three of the four keyword types support async validation. This page covers how t
 
 ---
 
-## ⚠️ Critical: Enable Async Mode
+## Enable Async Mode
 
 You **must** pass `async: true` to the @jetio/validator constructor or compiler when using async keywords. Without it, validation returns immediately before async operations complete, producing incorrect results.
+You **must** also register the keyword as async.
 
 ```typescript
-// ❌ WRONG — race conditions
+// ❌ race conditions
 const validator = new JetValidator();
 validator.addKeyword({ keyword: "checkDB", validate: async (sv, data) => { ... } });
 const validate = validator.compile(schema);
 const result = validate({ id: "test" });  // returns before async completes!
 
-// ✅ CORRECT — instance level
+// ✅ instance level
 const validator = new JetValidator({ async: true });
 
-// ✅ CORRECT — per compilation
+// ✅ per compilation
 const validator = new JetValidator();
 const validate = validator.compile(schema, { async: true });
+
+// ✅
+validator.addKeyword({ keyword: "checkDB", async: true, validate: async (sv, data) => { ... } });
 ```
 
 ---
@@ -51,6 +55,7 @@ const validator = new JetValidator({ async: true });
 validator.addKeyword({
   keyword: "uniqueEmail",
   type: "string",
+  async: true,
   compile: (config) => {
     return async (data, rootData, dataPath) => {
       const exists = await checkEmailInDatabase(data);
@@ -76,6 +81,7 @@ const validator = new JetValidator({ async: true });
 validator.addKeyword({
   keyword: "existsInAPI",
   type: "string",
+  async: true,
   validate: async (schemaValue, data) => {
     if (!schemaValue) return true;
     const response = await fetch(`https://api.example.com/check/${data}`);
@@ -127,6 +133,7 @@ const validator = new JetValidator({ async: true, allErrors: true });
 validator.addKeyword({
   keyword: "uniqueEmail",
   type: "string",
+  async: true,
   compile: (config) => {
     return async (data) => {
       const exists = await checkEmailInDatabase(data);
@@ -138,6 +145,7 @@ validator.addKeyword({
 validator.addKeyword({
   keyword: "validUsername",
   type: "string",
+  async: true,
   validate: async (schemaValue, data) => {
     const available = await checkUsernameAvailability(data);
     return available || { message: "Username not available" };
@@ -183,6 +191,7 @@ validator.compile(schema, { async: true });
 ```typescript
 validator.addKeyword({
   keyword: "apiCheck",
+  async: true,
   validate: async (schemaValue, data) => {
     try {
       const result = await apiCall(data);
@@ -199,6 +208,7 @@ validator.addKeyword({
 ```typescript
 validator.addKeyword({
   keyword: "timedCheck",
+  async: true,
   compile: (config) => {
     return async (data) => {
       const timeout = config.timeout || 5000;
@@ -228,6 +238,7 @@ const cache = new Map();
 
 validator.addKeyword({
   keyword: "cachedCheck",
+  async: "true",
   compile: (config) => {
     return async (data) => {
       if (cache.has(data)) return cache.get(data);

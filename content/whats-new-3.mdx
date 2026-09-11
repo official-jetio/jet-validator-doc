@@ -1,0 +1,229 @@
+---
+title: "Upgrading to 3.0"
+description: "What changed in JetValidator 3.0, why, and how to update your code."
+---
+
+import { Callout } from 'nextra/components'
+
+# Upgrading to 3.0
+
+JetValidator 3.0 is a large internal rewrite paired with a batch of correctness fixes. Most day-to-day code keeps working unchanged. Schemas compile and validate the same way, and the public surface (`compile`, `validate`, `addSchema`, `addKeyword`, `addFormat`, and friends) keeps its shape. What changed is mostly how strict-mode problems are reported, several behaviors that were quietly wrong in v2, and the fact that a few options now write their changes back into your data.
+
+v2 is now deprecated and will not receive further fixes, since fixing v2 is what produced these changes. If you can't upgrade yet, v2 remains available on npm and preserved at its release tag.
+
+## At a Glance
+
+| Change | Impact | Action needed |
+| :--- | :--- | :--- |
+| Strict-mode errors are collected and thrown together | Behavioral | Update code matching exact strict-error text |
+| Strict mode now type-checks keyword *values* | Behavioral | Fix mistyped keyword values, or use `$data` |
+| New `strictTypes: "log"` mode | Additive | None |
+| `removeAdditional`, `useDefaults`, `coerceTypes` now modify your data | Behavioral | Clone input first if you need the original |
+| `coerceTypes: "array"` unwraps single-element arrays and wraps `null` | Behavioral | Review array-coercion schemas |
+| Defaults are hoisted; combinator-only defaults are a compile error | Behavioral / Fix | Move or remove defaults inside `oneOf`/`anyOf`/`not`/`if` |
+| `pattern` / `patternProperties` compile with the Unicode (`u`) flag | Behavioral | Review patterns relying on non-Unicode quirks |
+| JSON Pointer escaping in schema paths | Fix | Review `errorMessage` on keys containing `/` or `~` |
+| `generateStandalone` reworked, many fixes, custom function names | Behavioral / Fix | Reread the standalone docs, move `sconfig` to 3rd arg |
+| `code` keyword context changed; `validate` keyword `parentData` fixed | Breaking / Fix | Update `code` keyword authors; recheck `validate` keywords |
+| `getAddedKeywords()` now returns your keywords | Fix | Remove any workaround |
+| `unevaluated*` tracking no longer leaks into nested schemas | Fix | Recheck schemas nesting these keywords |
+| `strictNumbers` now defaults to `false` | Behavioral | Set it explicitly if you want it |
+| Validator `.errors` may be `null` (not `[]`) on success | Behavioral | Use a length-safe error check |
+
+## Strict-Mode Validation Now Reports Every Problem at Once
+
+In v2, strict checks (`strict`, `strictTypes`, `strictRequired`, `strictSchema`) threw on the first violation encountered while walking the schema. A schema with three separate strict problems surfaced them one compile at a time.
+
+In 3.0 the schema walk collects every violation (missing `type`, unknown keywords, incompatible keywords, `required` fields absent from `properties`, and mistyped keyword values) and throws a single aggregated error at the end of resolution describing all of them together.
+
+```typescript
+// Under strict mode, this schema has three separate problems:
+const schema = {
+  type: "object",
+  required: ["email"],              // not present in "properties"
+  properties: {
+    name: { minLength: 2 },         // no "type" for a string keyword
+  },
+  maxItems: 5,                      // an array keyword on an object
+};
+```
+
+v2 threw on whichever it reached first. 3.0 throws one error listing all of them, grouped by category:
+
+```
+Schema validation failed: 3 issues found.
+
+Missing type (1):
+  • [strict] "minLength" at #/properties/name requires type "string"
+
+Strict required (1):
+  • [strict] at #, required references property not in "properties": "email"
+
+Incompatible keywords (1):
+  • [strict] "maxItems" at # not compatible with type "object"
+```
+
+The message is prefixed with the schema's `$id` when it has one, and each category lists up to a fixed number of items before collapsing the rest into an `… and N more` line. A category for an invalid keyword *value* type reads slightly differently and notes the `$data` escape hatch where it applies: `"minLength" at #/... must be of type "number" (or a $data reference)`.
+
+**What to do:** if you assert on the exact text of strict-mode errors (in tests or error handling), update those assertions. If you only rely on "invalid schema throws", nothing changes.
+
+## Strict Mode Now Type-Checks Keyword Values
+
+New in 3.0. Under `strict` (or `strictSchema`), the schema walk validates that each keyword's *value* has the expected type, for example that `minLength` is a number, `required` is an array, and `properties` is an object.
+
+```typescript
+// Under strict, this now raises a schema error in 3.0 (minLength must be a number):
+const schema = { type: "string", minLength: "3" };
+```
+
+`$data` references are exempt. A keyword whose value is a `{ $data }` pointer is not type-checked, since its value is resolved at validation time.
+
+**What to do:** correct any schemas that leaned on loosely-typed keyword values under strict mode, or express the value as a `$data` reference where that's intentional. Non-strict compilation is unaffected.
+
+## New `strictTypes: "log"` Mode
+
+`strictTypes` now accepts `"log"` in addition to its boolean form. In `"log"` mode, a subschema missing an explicit `type` produces a `console.warn` instead of contributing a thrown error, so you can surface the warnings without failing compilation.
+
+This is additive. Existing boolean `strictTypes` behavior is unchanged.
+
+## Options That Now Modify Your Data
+
+`removeAdditional`, `useDefaults`, and `coerceTypes` now apply their changes to the data being validated, not just to internal validation state. After a validation run the data reflects stripped additional properties, applied defaults, and coerced types.
+
+<Callout type="warning">
+  These options now mutate the data you hand to the validator. If you need the original input preserved, pass a copy (for example `structuredClone(data)`) and read the result back from that copy.
+</Callout>
+
+**What to do:** read the modified data back after validating. Instances compiled without these options do not touch your data.
+
+## `coerceTypes: "array"` Coercion Changes
+
+Two behaviors changed for array coercion:
+
+- Single-element arrays are now unwrapped, in addition to scalars being wrapped. `["10"]` now satisfies `{ type: "number" }` by unwrapping to `"10"` and then coercing to `10`.
+- `null` is now wrapped into `[null]` instead of being skipped.
+
+**What to do:** if any code relied on the old skip-`null` behavior or on single-element arrays not being unwrapped, review those schemas.
+
+## Defaults: `required`, Hoisting, and Combinator Branches
+
+- A `default` no longer fails validation when the property is also listed in `required`. Defaults are now hoisted so they apply before the `required` check runs.
+- A `default` reachable only through `oneOf`, `anyOf`, `not`, or `if` is now a compile error instead of being silently ignored. Applying such a default would change which branch matches, so 3.0 rejects it rather than guessing.
+
+**What to do:** move a combinator-only default up to a level where it applies unambiguously, or remove it.
+
+## Pattern Matching Is Now Unicode-Aware
+
+Compiled `pattern` and `patternProperties` regexes are now built with the Unicode (`u`) flag. This makes matching correct for surrogate pairs and Unicode escapes, and it means a malformed pattern (such as an invalid `\` escape) is rejected at compile time rather than silently mismatching.
+
+**What to do:** if any pattern depended on non-`u` regex leniency (invalid escapes, lone surrogates, or dot and quantifier behavior around astral characters), review it. Well-formed patterns are unaffected.
+
+## JSON Pointer Escaping in Schema Paths
+
+In v2, nested schema paths were built by concatenating raw property keys. A property name containing `/` or `~` produced a malformed JSON Pointer, which threw off `schemaPath` values and any `errorMessage` targeting for those keys.
+
+3.0 encodes each path segment per RFC 6901 (`~1` for `/`, `~0` for `~`) across `properties`, `patternProperties`, `dependentSchemas`, `$defs`, and `definitions`, in both metadata collection and macro expansion.
+
+**What to do:** if you place `errorMessage` on property keys containing `/` or `~`, confirm the messages now resolve where you expect. Keys without those characters are unaffected.
+
+## Standalone Generation: Reworked, Many Fixes, and Custom Function Names
+
+`generateStandalone` received a batch of bug fixes along with changes to how it emits code, particularly around custom keywords and `$data`.
+
+<Callout type="warning">
+  If you use `generateStandalone`, rereading the standalone section of the docs is strongly recommended, especially when your schema uses `compile`-based custom keywords. The way their schemas and helpers are emitted has changed.
+</Callout>
+
+You can now name the generated function. The signature gained a middle options argument:
+
+```typescript
+// v2
+generateStandalone(schema, sconfig?)
+
+// 3.0
+generateStandalone(schema, { functionName: "validateUser" }, sconfig?)
+```
+
+Also fixed: v2 reused the name `validate0` for every call because its counter never advanced, so generating more than one validator produced clashing names. 3.0 increments the generated name per call when you do not supply one.
+
+**What to do:** if you passed a config as the second argument, move it to the third position. If you name functions yourself, pass `{ functionName }` as the second argument.
+
+## Custom Keyword API Changes
+
+Two changes affect authors of custom keywords.
+
+**`code` keywords: the context object changed (breaking).** The `CodeContext` passed to a `code` keyword no longer exposes `accessPattern` or `extra`. In their place it provides `fullAccess` (a frozen array of access-path segments), `rootDataVar`, `errorVariable`, and a `resolveDataPointer(pointer)` helper that resolves a `$data` pointer to a compile-time accessor. `functionName` now comes from the call context, and `addEvaluatedProperty(prop)` takes a raw property name and quotes it internally.
+
+```typescript
+// v2: read the current accessor and stitch paths yourself
+jetValidator.addKeyword({
+  keyword: "myCode",
+  code: (value, schema, ctx) => {
+    const target = ctx.accessPattern;
+    // ...
+  },
+});
+
+// 3.0: use fullAccess / rootDataVar, and resolveDataPointer for $data
+jetValidator.addKeyword({
+  keyword: "myCode",
+  code: (value, schema, ctx) => {
+    const target = ctx.dataVar;
+    const sibling = ctx.resolveDataPointer("1/otherField");
+    // ...
+  },
+});
+```
+
+**What to do:** if a `code` keyword read `ctx.accessPattern` or `ctx.extra`, move to `ctx.dataVar`, `ctx.fullAccess`, `ctx.rootDataVar`, and `ctx.resolveDataPointer`.
+
+**`validate` keywords: `parentData` and `parentDataProperty` are now correct.** In v2 these were derived from a fragile string split, so anything nested was wrong. Validating `data["user"]["name"]` handed you `data` as `parentData` instead of `data["user"]`. 3.0 reconstructs the parent reference and the key from the structured access path, and handles array indices and dynamic keys correctly.
+
+**What to do:** nothing to change, but recheck any `validate` keyword that reads its siblings through `parentData`, since it now sees the right object.
+
+A smaller robustness fix: an object returned from a `compile` or `validate` keyword is spread into the emitted error only when it is actually an object, so a non-object return value is no longer mis-spread.
+
+## `getAddedKeywords()` Now Returns Your Keywords
+
+In v2, `getAddedKeywords()` called `Object.keys()` on a `Map`, which always returned an empty array. 3.0 returns the actual registered keyword names.
+
+**What to do:** remove any workaround that assumed this method returned nothing.
+
+## Registry Reset Methods Behave More Predictably
+
+- `clearRegistries()` in v2 emptied the format table entirely, dropping the built-in formats. 3.0 re-initializes the default formats (per `formatMode`) so the instance is reusable afterward.
+- `clearSchemas()` now also clears the compilation cache when caching is enabled, so a cleared schema can't be served from a stale compiled validator.
+
+**What to do:** usually nothing. If you relied on `clearRegistries()` wiping default formats, re-register your own set afterward.
+
+## Fixed: `unevaluated*` Tracking No Longer Leaks Into Nested Schemas
+
+In v2, the bookkeeping for `unevaluatedItems` and `unevaluatedProperties` kept propagating downward into nested subschemas instead of stopping at the immediate child level. A parent's evaluation context bled into deeper schemas, so items and properties were sometimes treated as evaluated when they should not have been.
+
+3.0 stops the propagation at the correct level, so `unevaluatedItems` and `unevaluatedProperties` resolve against the scope they belong to.
+
+**What to do:** nothing, but recheck any schema that nests these keywords, since results for those cases may shift to the correct outcome.
+
+## `strictNumbers` Now Defaults to `false`
+
+`strictNumbers` now defaults to `false`. When on, it enforces number finiteness (rejecting `NaN`, `Infinity`, and `-Infinity` for numeric types) along with proper floating-point precision handling. Note that a default instance still runs with `strict: true`, and `strict` continues to apply these checks, so a plain `new JetValidator()` still enforces them. The default change is observable when `strict` is off and you want the checks enforced: set `strictNumbers: true` explicitly.
+
+## Validator `.errors` on Success
+
+To avoid allocating an array for valid data, the generated validator starts its error accumulator as `null` and allocates only when the first error is pushed. In `allErrors` mode this means a successful validation can leave `validator.errors` as `null` rather than `[]`.
+
+**What to do:** prefer a length-safe check, such as `if (!result.valid) { for (const e of result.errors) ... }`, rather than reading `result.errors.length` unconditionally.
+
+## Migration Checklist
+
+1. Update any assertions on exact strict-mode error text. Problems now arrive aggregated in one message.
+2. Fix schemas with mistyped keyword values under strict mode, or express them as `$data`.
+3. Clone your input before validating if you use `removeAdditional`, `useDefaults`, or `coerceTypes` and need the original preserved.
+4. Review `coerceTypes: "array"` schemas for the new unwrap and `null` behavior.
+5. Move or remove `default` values that sit only inside `oneOf`, `anyOf`, `not`, or `if`.
+6. Review regex patterns that relied on non-Unicode behavior.
+7. Reread the standalone docs if you use `generateStandalone`, and move any config to the third argument.
+8. Update `code` keyword authors for the new `CodeContext` (`fullAccess`, `rootDataVar`, `resolveDataPointer`), and recheck `validate` keywords that read `parentData`.
+9. Confirm `errorMessage` placement on property keys containing `/` or `~`.
+10. Prefer length-safe error checks, since `.errors` may be `null` on success in `allErrors` mode.
+11. Everything else, including normal `compile` and `validate`, schema registration, formats, and keywords, works unchanged.

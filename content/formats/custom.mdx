@@ -1,0 +1,166 @@
+---
+title: "Custom Formats"
+description: "Defining custom formats with regex, functions, or objects, and constraining them to specific types."
+---
+
+import { Callout } from 'nextra/components'
+
+# Custom Formats
+
+`addFormat` registers a validator you can reference by name in a schema's `format` keyword. There are three definition styles. For configuration see [Format Configuration](/formats/configuration); for async validators see [Async Formats](/formats/async).
+
+## Definition Styles
+
+### 1. Regular expression
+
+The simplest form, a pattern to match against:
+
+```typescript
+jetValidator.addFormat("username", /^[a-zA-Z0-9_]{3,16}$/);
+
+const validate = jetValidator.compile({ type: "string", format: "username" });
+validate("john_doe"); // true
+validate("ab");        // false
+```
+
+### 2. Validation function
+
+A function that receives the value and returns a boolean:
+
+```typescript
+jetValidator.addFormat("even-length", (value: string) => value.length % 2 === 0);
+
+const validate = jetValidator.compile({ type: "string", format: "even-length" });
+validate("test");  // true  (length 4)
+validate("hello"); // false (length 5)
+```
+
+Signature: `(value: any) => boolean`.
+
+### 3. Object with `validate`
+
+An object whose `validate` is a regex or function, plus optional `type` and `async`:
+
+```typescript
+jetValidator.addFormat("hex-color", { validate: /^#[0-9A-Fa-f]{6}$/ });
+jetValidator.addFormat("positive", { type: "number", validate: (v: number) => v > 0 });
+```
+
+Use the object form when you want to attach a `type` constraint or mark the format `async`.
+
+## Type Constraints
+
+By default a format applies to string values. Declare a `type` on the format to apply it to another type instead.
+
+<Callout type="info">
+  Type-based gating for non-string formats is part of a planned change (see the "Format Type Gating" note in the 3.0 upgrade guide). Until it ships, a format declaring a non-string `type` is registered but does not run against non-string values. The examples below describe the intended, type-driven model.
+</Callout>
+
+### Single type
+
+```typescript
+jetValidator.addFormat("positive", {
+  type: "number",
+  validate: (value: number) => value > 0,
+});
+
+const validate = jetValidator.compile({ type: "number", format: "positive" });
+```
+
+The `positive` format runs only against numbers. On a value of another type the format is skipped, so the format alone never rejects a non-number. Pair it with `type: "number"` in the schema (as above) when you want non-numbers rejected outright.
+
+### Multiple types
+
+A format can target several types with an array:
+
+```typescript
+jetValidator.addFormat("non-empty", {
+  type: ["string", "array"],
+  validate: (value: string | any[]) => value.length > 0,
+});
+```
+
+`non-empty` runs against strings and arrays and is skipped for other types.
+
+### Why constrain types
+
+- **Correctness:** the validator only runs where it makes sense, and receives correctly typed values.
+- **Spec alignment:** a `format` on an instance of the wrong type is ignored rather than forced to fail, matching JSON Schema.
+- **Self-documentation:** the schema states what the format is for.
+
+## Patterns
+
+### Reusing format logic
+
+```typescript
+const isValidLength = (min: number, max: number) => (value: string) =>
+  value.length >= min && value.length <= max;
+
+jetValidator.addFormat("short-text",  { type: "string", validate: isValidLength(1, 50) });
+jetValidator.addFormat("medium-text", { type: "string", validate: isValidLength(1, 200) });
+jetValidator.addFormat("long-text",   { type: "string", validate: isValidLength(1, 1000) });
+```
+
+### Formats with dependencies
+
+```typescript
+import validator from "validator";
+
+jetValidator.addFormat("credit-card", { type: "string", validate: (v: string) => validator.isCreditCard(v) });
+jetValidator.addFormat("isbn",        { type: "string", validate: (v: string) => validator.isISBN(v) });
+```
+
+### Composition in a schema
+
+```typescript
+jetValidator.addFormat("strong-password", {
+  type: "string",
+  validate: (value: string) =>
+    value.length >= 12 &&
+    /[A-Z]/.test(value) &&
+    /[a-z]/.test(value) &&
+    /[0-9]/.test(value) &&
+    /[!@#$%^&*]/.test(value),
+});
+
+const schema = {
+  type: "object",
+  properties: {
+    username: { type: "string", format: "username" },
+    password: { type: "string", format: "strong-password" },
+    email:    { type: "string", format: "email" },
+  },
+  required: ["username", "password", "email"],
+};
+```
+
+### Conditional format by another field
+
+```typescript
+const schema = {
+  type: "object",
+  properties: { contactType: { type: "string", enum: ["email", "phone"] } },
+  if:   { properties: { contactType: { const: "email" } } },
+  then: { properties: { contact: { type: "string", format: "email" } } },
+  else: { properties: { contact: { type: "string", format: "phone" } } },
+};
+```
+
+### Side effects
+
+```typescript
+const auditLog: string[] = [];
+
+jetValidator.addFormat("audited-email", {
+  type: "string",
+  validate: (value: string) => {
+    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+    auditLog.push(`Email validation: ${value} - ${ok ? "PASS" : "FAIL"}`);
+    return ok;
+  },
+});
+```
+
+<Callout type="warning">
+  Keep format validators pure where you can. A validator may be called more than once per validation run, so side effects can fire repeatedly.
+</Callout>

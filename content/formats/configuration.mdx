@@ -1,0 +1,110 @@
+---
+title: "Formats: Configuration"
+description: "Format modes, validation toggles, async support, the $data formats list, and per-compile overrides."
+---
+
+import { Callout } from 'nextra/components'
+
+# Format Configuration
+
+Format validation checks string values (and, for typed custom formats, other types) against built-in or custom patterns. This page covers how to configure it. See [Custom Formats](/formats/custom) for defining your own, [Async Formats](/formats/async) for I/O-backed validation, and the [Format API Reference](/formats/api-reference) for the full method list.
+
+## Instance-Level Configuration
+
+Format behavior is set when you create an instance:
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+
+const jetValidator = new JetValidator({
+  formatMode: "full",     // "full" | "fast" | false — which built-in formats load
+  validateFormats: true,  // whether formats are actually checked
+  async: false,           // whether async format validators are supported
+  formats: [],            // format names exposed to $data format references
+});
+```
+
+### `formatMode`
+
+Controls which built-in format validators are loaded:
+
+- `"full"` (default): the full set, including function-based and complex-regex validators.
+- `"fast"`: regex-only validators, for faster validation.
+- `false`: no built-in formats load. Custom formats still work.
+
+```typescript
+const full = new JetValidator({ formatMode: "full" });
+const fast = new JetValidator({ formatMode: "fast" });
+const none = new JetValidator({ formatMode: false });
+```
+
+### `validateFormats`
+
+- `true` (default): formats are validated.
+- `false`: formats can be registered and referenced but are not checked.
+
+```typescript
+const jetValidator = new JetValidator({
+  formatMode: "full",
+  validateFormats: false, // formats available for reference, not enforced
+});
+```
+
+### `async`
+
+- `false` (default): only synchronous format validators are supported.
+- `true`: async format validators are supported, and every validator must be awaited.
+
+```typescript
+const jetValidator = new JetValidator({ async: true });
+```
+
+See [Async Formats](/formats/async) for the full picture.
+
+### `formats`
+
+A list of format names to expose to `$data` format references. When a schema selects its format dynamically (`format: { $data: "..." }`), the resolved name is looked up against this set. It is a `string[]`, not a mode:
+
+```typescript
+const jetValidator = new JetValidator({
+  $data: true,
+  formats: ["email", "uuid", "custom-code"],
+});
+```
+
+<Callout type="info">
+  `formats` and `formatMode` are different options. `formatMode` chooses which built-in validators load; `formats` lists the names available to `$data` format lookups.
+</Callout>
+
+## Per-Compilation Configuration
+
+Most instance options can be overridden per `compile` call:
+
+```typescript
+const jetValidator = new JetValidator({
+  formatMode: "full",
+  validateFormats: true,
+  async: false,
+});
+
+const validate = jetValidator.compile(schema, {
+  validateFormats: false, // skip format checks for this schema
+  async: true,            // enable async for this schema
+});
+```
+
+<Callout type="warning">
+  `formatMode` cannot be overridden per compile. The built-in validators load immediately when the instance is constructed, so the mode is fixed at that point.
+</Callout>
+
+## Built-in Formats
+
+### Full set (`formatMode: "full"`)
+
+**String formats:** `email`, `uri`, `uri-reference`, `uri-template`, `url`, `uuid`, `hostname`, `ipv4`, `ipv6`, `json-pointer`, `relative-json-pointer`, `regex`.
+
+**Date and time formats:** `date-time`, `date`, `time`, `duration`.
+
+### Fast set (`formatMode: "fast"`)
+
+Simpler, regex-only versions of the same formats, traded for speed over strictness.

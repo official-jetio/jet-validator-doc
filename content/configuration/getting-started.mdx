@@ -1,0 +1,57 @@
+---
+title: "Getting Started"
+description: "Install @jetio/validator and start compiling schemas from Draft 06 through 2020-12 without choosing a schema language."
+---
+
+# Getting Started
+
+## 📚 Choosing Schema Language
+
+With **@jetio/validator**, you do not need to choose an explicit schema language. @jetio/validator supports JSON Schema Draft 06 through 2020-12 seamlessly.
+
+No additional configuration or setup is needed, it compiles any schema from any version from Draft 06 to 2020-12.
+
+**It's as simple as:**
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+
+const jetValidator = new JetValidator();
+
+// Draft 07 schema
+const schema1 = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+  },
+  required: ["name"],
+};
+
+// Draft 2020-12 schema
+const schema2 = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+  },
+  required: ["name"],
+  unevaluatedProperties: false,
+};
+
+const validate1 = jetValidator.compile(schema1);
+const validate2 = jetValidator.compile(schema2);
+
+console.log(validate1({ name: "John", age: 30 })); // true
+console.log(validate2({ name: "Jane", age: 25 })); // true
+```
+
+The compiler handles schemas from any accepted version flawlessly, removing the need for separate imports or separate @jetio/validator instances. The only extra configuration needed is for meta schemas (see [Meta Schema](/meta-schemas/meta-schema-basics) section).
+
+---
+
+## Next Steps
+
+- [Configuration Overview](/configuration/overview) - the constructor and the full `ValidatorOptions` interface.
+- [Refs & Debugging](/configuration/refs-and-debugging), [Error Handling](/configuration/error-handling), [Strictness](/configuration/strictness), [Data Modification](/configuration/data-modification), [Performance](/configuration/performance), [Metaschema](/configuration/metaschema), [Advanced](/configuration/advanced), and [Formats](/configuration/formats) - the configuration options, grouped by concern.
+- [Validation Examples](/configuration/validation-examples) - worked examples for common schema shapes.

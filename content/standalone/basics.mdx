@@ -56,7 +56,7 @@ generateStandalone(
 **Basic usage:**
 
 ```typescript
-const result = jetValidator.generateStandalone(schema, config);
+const result = jetValidator.generateStandalone(schema,{}, config);
 
 console.log(result.code); // complete validation function
 console.log(result.functionName); // generated function name
@@ -128,7 +128,7 @@ const schema = {
   },
 };
 
-const result = validator.generateStandalone(schema, {});
+const result = validator.generateStandalone(schema, {functionName:"validate"});
 console.log(result.code);
 ```
 

@@ -71,24 +71,22 @@ const uniqueInParent = (schemaValue, data, parentSchema, dataContext) => {
 
 ---
 
-## `compile` Keywords — The `...args` Pattern
+## `compile` Keywords
 
-`compile` is a factory function. It returns another function. Only the **returned function** is inlined, not the factory itself. This creates a challenge: compilation context (schemaValue, parentSchema, etc.) exists at compile time but needs to be available at validation time.
+>The ..args pattern is discarded.
 
-**Solution:** Use rest parameters (`...args`) to capture compilation context in a closure that gets serialized with the returned function.
+`compile` is a factory function. It returns another function.
+So the factory is inlined and another variable is defined passing necessary arguments to the factory to get the returned function.
+This only happens once at startup so there is no runtime performance cost.
 
 ```typescript
 jetValidator.addKeyword({
   keyword: "maxScore",
   type: "number",
   schemaType: "number",
-  compile: (...args) => {
-    // args[0] = schemaValue
-    // args[1] = parentSchema
-    // args[2] = context (schemaPath, rootSchema, opts)
-
+  compile: (schemaValue, parentSchema, context) => {
     return (data, rootData, dataPath) => {
-      const maxValue = args[0]; // captured via ...args
+      const maxValue = schemaValue;
       if (data > maxValue) {
         return { message: `Score must not exceed ${maxValue}` };
       }
@@ -102,90 +100,46 @@ jetValidator.addKeyword({
 
 ```javascript
 const compilerOptions = { "formatMode": "full", "$data": false, ... };
-const mainRootSchema  = { "type": "object", "properties": { ... } };
+const mainRootSchema = { maxScore: 5 };
+
+const kw_maxScore0schema = { maxScore: 5 };
+const kw_maxScore = (schemaValue, parentSchema, context) => {
+  return (data, rootData, dataPath) => {
+    const maxValue = schemaValue;
+    if (data > maxValue) {
+      return { message: `Score must not exceed ${maxValue}` };
+    }
+    return true;
+  };
+};
+
+const kw_maxScore0 = kw_maxScore(5, kw_maxScore0schema, {
+  schemaPath: "#",
+  rootSchema: mainRootSchema,
+  opts: compilerOptions,
+});
 
 function validate(rootData) {
-  // ...
-
-  if (var0["score"] !== undefined) {
-    const var1 = var0["score"];
-    if (typeof var1 !== "number") {
-      validate.errors = [{...}];
-      return false;
-    }
-
-    const maxScore_1 = (...args) => (data, rootData, dataPath) => {
-      const maxValue = args[0];
-      if (data > maxValue) {
-        return { message: `Score must not exceed ${maxValue}` };
-      }
-      return true;
-    };
-
-    const maxScore_1Result = maxScore_1(
-      100,
-      { type: "number", maxScore: 100 },
-      {
-        schemaPath: "#/properties/score",
-        rootSchema: mainRootSchema,
-        opts: compilerOptions
-      }
-    )(var1, rootData, "/score");
-
-    if (maxScore_1Result !== true && typeof maxScore_1Result === "object") {
-      validate.errors = [{
-        dataPath: "/score",
-        schemaPath: "#/properties/score",
+  let allErrors = null;
+  if (typeof rootData === "number" && Number.isFinite(rootData)) {
+    const kw_maxScore0Res = kw_maxScore0(rootData, rootData, ``);
+    if (kw_maxScore0Res !== true) {
+      allErrors ??= [];
+      allErrors.push({
+        dataPath: ``,
+        schemaPath: `#`,
         keyword: "maxScore",
-        message: maxScore_1Result.message || "Failed validation for keyword 'maxScore'"
-      }];
+        message: "Failed validation for keyword 'maxScore'",
+        ...(typeof kw_maxScore0Res === "object" && kw_maxScore0Res !== null
+          ? kw_maxScore0Res
+          : {}),
+      });
+      validate.errors = allErrors;
       return false;
     }
   }
-
+  validate.errors = allErrors;
   return true;
-}
-```
-
-### What Works and What Doesn't
-
-**✅ Works — value captured via `args[0]`:**
-
-```typescript
-compile: (...args) => {
-  return (data) => data > args[0];
-};
-```
-
-**❌ Fails — value extracted before closure:**
-
-```typescript
-compile: (...args) => {
-  const threshold = args[0]; // not captured in the returned function's closure
-  return (data) => data > threshold;
-};
-```
-
-**❌ Fails — external import:**
-
-```typescript
-import { checkLimit } from './utils';
-
-compile: (...args) => {
-  return (data) => checkLimit(data, args[0]);  // checkLimit not available at runtime
-}
-**Solution:** Provide external dependencies as imports in your standalone deployment.
-
-```
-
-**❌ Fails — destructured from named params:**
-
-```typescript
-compile: (condition, parentSchema, context) => {
-  const { field, value } = condition;  // not accessible via ...args
-  return (data, rootData) => {
-    if (rootData[field] === value) { ... }  // field doesn't exist at runtime
-  };
 }
 ```
 
@@ -245,7 +199,6 @@ Adding external depencies is as simple as that, just ensure the imports are corr
 1. **Use a dedicated instance** for standalone generation with its own configuration.
 2. **Always specify `formats`** when using `$data` to avoid bloating the output.
 3. **Specify `overwrittenFormats`** if you've replaced any built-in formats.
-4. **Use `...args`** in `compile` keywords — it's the only way to capture compilation context in standalone output.
-5. **Keep keyword functions self-contained** — document any external dependencies they need.
-6. **Prefer `code` keywords** for the most direct inlining with zero overhead.
-7. **Macros need no special handling** — they produce standard schema structures and are always standalone-compatible.
+4. **Keep keyword functions self-contained** — document any external dependencies they need.
+5. **Prefer `code` keywords** for the most direct inlining with zero overhead.
+6. **Macros need no special handling** — they produce standard schema structures and are always standalone-compatible.

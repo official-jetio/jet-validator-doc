@@ -26,7 +26,7 @@ const jetValidator = new JetValidator({
 loadDraft07(jetValidator);
 
 const schema = { type: "string" }; // no $schema keyword
-jetValidator.validateSchema(schema); // validates against Draft-07
+jetValidator.validateSchemaSync(schema); // validates against Draft-07
 ```
 
 ### Disable validation for production
@@ -90,7 +90,7 @@ const internalValidator = jetValidator.compile(internalSchema, {
 
 ## Built-in Aliases
 
-@jetio/validator provides short aliases for meta-schema URIs to cut verbosity. They work everywhere a meta-schema is accepted — the constructor, `validateSchema`, `compile`, and `compileAsync`.
+@jetio/validator provides short aliases for meta-schema URIs to cut verbosity. They work everywhere a meta-schema is accepted — the constructor, `validateSchemaSync`, `validateSchemaAsync`, `compile`, and `compileAsync`.
 
 | Short Alias     | Full URI                                       |
 | :-------------- | :--------------------------------------------- |
@@ -101,10 +101,10 @@ const internalValidator = jetValidator.compile(internalSchema, {
 
 ```typescript
 // These are equivalent:
-jetValidator.validateSchema(schema, {
+jetValidator.validateSchemaSync(schema, {
   metaSchema: "https://json-schema.org/draft-07/schema",
 });
-jetValidator.validateSchema(schema, {
+jetValidator.validateSchemaSync(schema, {
   metaSchema: "draft-07", // resolved internally to the full URI
 });
 ```
@@ -130,8 +130,8 @@ jetValidator.validateSchema(schema, {
 
 | Option           | Type      | Default | Description                                 |
 | :--------------- | :-------- | :------ | :------------------------------------------ |
-| `validateSchema` | `boolean` | `true`  | Enable schema validation before compilation |
-| `metaSchema`     | `string`  | `''`    | Default meta-schema URI or alias            |
+| `validateSchema` | `boolean` | `false`  | Enable schema validation before compilation |
+| `metaSchema`     | `string` | `undefined`  | `undefined`    | Default meta-schema URI or alias            |
 
 **CLI**
 

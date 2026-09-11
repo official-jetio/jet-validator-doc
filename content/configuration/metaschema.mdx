@@ -1,0 +1,117 @@
+---
+title: "Metaschema & Schema"
+description: "Set a default metaschema, validate schemas against it, and control how external schemas are loaded and cached."
+---
+
+# Metaschema & Schema
+
+For complete documentation on `metaschemas`, see the [metaschema](/meta-schemas/meta-schema-basics) section.
+
+## `metaSchema`
+
+**Type:** `string`
+**Default:** `undefined`
+
+This property specifies the **default metaschema** to be used during the compilation process. The value must correspond to the identifier of one of the metaschemas that has been loaded into the current instance.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ metaSchema: "draft-07" });
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    minPrice: { type: 1 },
+    maxPrice: { type: "number" },
+  },
+}); // uses the metaschema defined to validate the schema.
+```
+
+## `validateSchema`
+
+**Type:** `boolean`
+**Default:** `false`
+
+When set to `true`, this option instructs the compiler to **validate the schema itself** against the configured **metaschema** before proceeding with compilation.
+
+This check ensures that the schema adheres to the rules of the JSON Schema specification (e.g., that keywords are used correctly and are of the right type), which helps catch malformed or invalid schemas early.
+
+**Important Note:**
+
+The **`validateSchema`** option should be used in conjunction with the **`metaSchema`** property.
+
+This is because the compiler needs a specified metaschema to use as the standard for validation. If `metaSchema` is not defined, schema validation will be skipped unless the schema being validated explicitly contains a **`$schema`** keyword.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({
+  metaSchema: "draft-07",
+  validateSchema: true,
+});
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    minPrice: { type: 1 },
+    maxPrice: { type: "number" },
+  },
+}); // Error, type keyword accepts string | string[] only.
+```
+
+## `addUsedSchema`
+
+**Type:** `boolean`
+**Default:** `true`
+
+This property enables **caching** for all externally referenced schemas. By doing this, any external schema is **fetched only once** and then stored for reuse throughout the entire compilation and validation process. This significantly **improves performance** and reduces network requests.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ addUsedSchema: true });
+
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    address: { $ref: "http://example.com/address.json" },
+  },
+}); // address.json is fetched for compilation and cached.
+
+const validate2 = jetValidator.compile({
+  type: "object",
+  properties: {
+    homeAddress: { $ref: "http://example.com/address.json" },
+  },
+}); // address.json is fetched from schema cache rather than externally.
+
+// if addUsedSchema: false, external references will be fetched every time.
+```
+
+## `loadSchema`
+
+**Type:** `(uri: string) => Promise<SchemaDefinition> | SchemaDefinition`
+**Default:** `undefined`
+
+The `loadSchema` function receives a callback function, which is used to **resolve external schema references**.
+
+This callback function executes the necessary logic to retrieve a referenced schema based on its **URI** (Uniform Resource Identifier) found within a `$ref` and `$dynamicRef` keyword. This allows schemas to be fetched from various external sources, such as a **database**, local **file system**, or over the **internet**.
+
+The function **must return a valid schema object**.
+
+_Note: This resolution function is only used for external references; local references within the same schema do not trigger this callback._
+
+**Quick Example:**
+
+```typescript
+const fetchSchema = (uri: string) => {
+  return db.fetch(uri);
+};
+const jetValidator = new JetValidator({ loadSchema: fetchSchema });
+
+const validate = jetValidator.compile({
+  type: "object",
+  properties: {
+    address: { $ref: "http://example.com/address.json" },
+  },
+}); // address.json is fetched by the loadSchema function when the schema is being resolved; the fetched schema is not cached unless addUsedSchema is true.
+```

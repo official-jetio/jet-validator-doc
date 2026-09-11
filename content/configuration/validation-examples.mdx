@@ -1,0 +1,479 @@
+---
+title: "Validation Examples"
+description: "Worked examples for common schema shapes: objects, nested objects, arrays, enums, string and number constraints, and additional properties."
+---
+
+# Validation Examples
+
+## Simple Object Validation
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+
+const jetValidator = new JetValidator();
+
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 2 },
+    age: { type: "number", minimum: 0, maximum: 120 },
+    email: { type: "string", format: "email" },
+  },
+  required: ["name", "age"],
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(
+  validate({
+    name: "Alice",
+    age: 25,
+    email: "alice@example.com",
+  }),
+);
+// true
+
+console.log(
+  validate({
+    name: "A",
+    age: 150,
+  }),
+); // false
+
+console.log(validate.errors);
+
+//   [{
+//     dataPath: '/name',
+//     schemaPath: '#/properties/name',
+//     keyword: 'minLength',
+//     expected: 2,
+//     message: 'must have at least 2 characters'
+//   }]
+```
+
+---
+
+## Nested Objects
+
+Validating objects with nested structure:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    address: {
+      type: "object",
+      properties: {
+        street: { type: "string" },
+        city: { type: "string" },
+        zipCode: { type: "string", pattern: "^[0-9]{5}$" },
+      },
+      required: ["street", "city"],
+    },
+  },
+  required: ["name", "address"],
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(
+  validate({
+    name: "John Doe",
+    address: {
+      street: "123 Main St",
+      city: "New York",
+      zipCode: "10001",
+    },
+  }),
+);
+// true
+
+console.log(
+  validate({
+    name: "Jane",
+    address: {
+      street: "456 Oak Ave",
+    },
+  }),
+); // false
+console.log(validate.errors);
+
+//   [{
+//     dataPath: '/address',
+//     schemaPath: '#/properties/address',
+//     keyword: 'required',
+//     expected: 'city',
+//     message: 'missing required field: "city" in data'
+//   }]
+```
+
+---
+
+## Arrays
+
+Validating arrays with item constraints:
+
+```typescript
+const schema = {
+  type: "array",
+  items: { type: "string" },
+  minItems: 1,
+  maxItems: 5,
+  uniqueItems: true,
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(validate(["apple", "banana", "orange"]));
+// true
+
+console.log(validate(["apple", "banana", "apple"])); // false
+console.log(validate.errors);
+//   [{
+//     dataPath: '',
+//     schemaPath: '#',
+//     keyword: 'uniqueItems',
+//     message: 'items must be unique'
+//   }]
+
+console.log(validate([])); //false
+console.log(validate.errors);
+
+//   [{
+//     dataPath: '',
+//     schemaPath: '#',
+//     keyword: 'minItems',
+//     expected: 1,
+//     message: 'must have at least 1 items'
+//   }]
+```
+
+---
+
+## Arrays of Objects
+
+Validating arrays containing objects:
+
+```typescript
+const schema = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      id: { type: "number" },
+      name: { type: "string", minLength: 1 },
+      active: { type: "boolean" },
+    },
+    required: ["id", "name"],
+  },
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(
+  validate([
+    { id: 1, name: "Alice", active: true },
+    { id: 2, name: "Bob", active: false },
+  ]),
+);
+// true
+
+console.log(
+  validate([
+    { id: 1, name: "Alice" },
+    { id: 2, name: "" },
+  ]),
+); //false
+console.log(validate.errors);
+//   [{
+//     dataPath: '/1/name',
+//     schemaPath: '#/items/properties/name',
+//     keyword: 'minLength',
+//     expected: 1,
+//     message: 'must have at least 1 characters'
+//   }]
+```
+
+---
+
+## Enums and Constants
+
+Validating against specific allowed values:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    status: {
+      enum: ["active", "inactive", "pending"],
+    },
+    role: {
+      enum: ["admin", "user", "guest"],
+    },
+    version: {
+      const: "1.0.0",
+    },
+  },
+  required: ["status", "version"],
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(
+  validate({
+    status: "active",
+    role: "admin",
+    version: "1.0.0",
+  }),
+);
+// true
+
+console.log(
+  validate({
+    status: "deleted",
+    version: "1.0.0",
+  }),
+); // false
+console.log(validate.errors);
+//  [{
+//     dataPath: '/status',
+//     schemaPath: '#/properties/status',
+//     keyword: 'enum',
+//     message: 'must be one of the allowed values'
+//     expected: ["active", "inactive", "pending"]
+//   }]
+
+console.log(
+  validate({
+    status: "active",
+    version: "2.0.0",
+  }),
+); // false
+console.log(validate.errors);
+// [{
+//     dataPath: '/version',
+//     schemaPath: '#/properties/version',
+//     keyword: 'const',
+//     expected: '1.0.0',
+//     message: 'must be equal to 1.0.0'
+//   }]
+```
+
+---
+
+## String Constraints
+
+Validating string length and patterns:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    username: {
+      type: "string",
+      minLength: 3,
+      maxLength: 20,
+      pattern: "^[a-zA-Z0-9_]+$",
+    },
+    password: {
+      type: "string",
+      minLength: 8,
+      pattern: "^(?=.*[A-Z])(?=.*[0-9])",
+    },
+  },
+  required: ["username", "password"],
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(
+  validate({
+    username: "john_doe",
+    password: "SecurePass123",
+  }),
+);
+// true
+
+console.log(
+  validate({
+    username: "ab",
+    password: "weak",
+  }),
+); // false
+console.log(validate.errors);
+// [{
+//     dataPath: '/username',
+//     schemaPath: '#/properties/username',
+//     keyword: 'minLength',
+//     expected: '3',
+//     message: 'must have at least 3 characters'
+//   }]
+
+console.log(
+  validate({
+    username: "john-doe!",
+    password: "SecurePass123",
+  }),
+); // false
+
+console.log(validate.errors);
+// [{
+//     dataPath: '/username',
+//     schemaPath: '#/properties/username',
+//     keyword: 'pattern',
+//     expected: '^[a-zA-Z0-9_]+$',
+//     message: 'must match pattern: ^[a-zA-Z0-9_]+$'
+//   }]
+```
+
+---
+
+## Number Constraints
+
+Validating numeric ranges and multiples:
+
+```typescript
+const schema = {
+  type: "object",
+  properties: {
+    age: {
+      type: "number",
+      minimum: 0,
+      maximum: 120,
+    },
+    score: {
+      type: "number",
+      minimum: 0,
+      maximum: 100,
+      multipleOf: 5,
+    },
+    price: {
+      type: "number",
+      exclusiveMinimum: 0,
+      multipleOf: 0.01,
+    },
+  },
+};
+
+const validate = jetValidator.compile(schema);
+
+console.log(
+  validate({
+    age: 25,
+    score: 85,
+    price: 19.99,
+  }),
+);
+// true
+
+console.log(
+  validate({
+    age: 150,
+    score: 85,
+    price: 19.99,
+  }),
+); // false
+console.log(validate.errors);
+// [{
+//     dataPath: '/age',
+//     schemaPath: '#/properties/age',
+//     keyword: 'maximum',
+//     expected: 120,
+//     message: 'must be <= 120'
+//   }]
+
+console.log(
+  validate({
+    age: 25,
+    score: 83,
+    price: 19.99,
+  }),
+); // false
+console.log(validate.errors);
+// [{
+//     dataPath: '/score',
+//     schemaPath: '#/properties/score',
+//     keyword: 'multipleOf',
+//     expected: 5,
+//     message: 'must be a multiple of 5'
+//   }]
+```
+
+---
+
+## Additional Properties
+
+Controlling extra properties in objects:
+
+```typescript
+// Disallow additional properties
+const strictSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+  },
+  additionalProperties: false,
+};
+
+const strictValidate = jetValidator.compile(strictSchema);
+
+console.log(
+  strictValidate({
+    name: "Alice",
+    age: 30,
+  }),
+);
+// true
+
+console.log(
+  strictValidate({
+    name: "Alice",
+    age: 30,
+    email: "alice@example.com",
+  }),
+); // false
+console.log(strictValidate.errors);
+// [{
+//     dataPath: '',
+//     schemaPath: '#/additionalProperties',
+//     keyword: 'additionalProperties',
+//     message: 'property email is not allowed'
+//   }]
+
+// Allow additional properties with type constraint
+const flexibleSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+  additionalProperties: { type: "string" },
+};
+
+const flexibleValidate = jetValidator.compile(flexibleSchema);
+
+console.log(
+  flexibleValidate({
+    name: "Alice",
+    email: "alice@example.com",
+    phone: "555-1234",
+  }),
+);
+// true
+
+console.log(
+  flexibleValidate({
+    name: "Alice",
+    age: 30,
+  }),
+); // false
+console.log(flexibleValidate.errors);
+// [{
+//     dataPath: '/age',
+//     schemaPath: '#/additionalProperties',
+//     keyword: 'type',
+//     expected: 'string',
+//     message: 'invalid type'
+//   }]
+```

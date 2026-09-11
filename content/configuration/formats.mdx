@@ -1,0 +1,150 @@
+---
+title: "Formats"
+description: "Load and validate string formats: scope which formats load, toggle format validation, choose full vs fast validators, and override built-ins."
+---
+
+# Formats
+
+> This page is the canonical reference for the format options. For how formats are **inlined** in standalone output (including dependency chains and `overwrittenFormats`), see [Format Handling in Standalone Mode](/standalone/formats).
+
+## `formats`
+
+**Type:** `string[]`
+**Default:** `[]`
+
+This property is particularly useful when using the `$data` keyword.
+Normally, when resolving a schema, the resolver walks through the schema collecting all formats before preparing them for validation.
+
+But when using the `$data` keyword the format is only known at run time, so with `formats` you can specify an array of expected formats — that way only those are loaded for validation; otherwise all available formats will be loaded.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ formats: ["email"] });
+
+const validate = jetValidator.compile({
+  type: "string",
+  format: "email",
+});
+
+validate("email@email.com"); // ✅ Valid (Only email is loaded to the validator)
+validate("email"); // ❌ Invalid
+
+const jetValidator2 = new JetValidator();
+
+const validate2 = jetValidator2.compile({
+  type: "string",
+  format: "email",
+});
+
+// All formats including built-in and custom will be loaded into the validator.
+validate2("email@email.com"); // ✅ Valid
+```
+
+## `validateFormats`
+
+**Type:** `boolean`
+**Default:** `true`
+
+The `validateFormats` property controls whether the compiler performs **format validation**.
+
+When set to `true`, the values associated with the **`format` keyword** in your schema are checked against the data for compliance with their specified structure (e.g., "email," "date-time," etc.). If set to `false`, the `format` keywords are **ignored**.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ validateFormats: true });
+
+const validate = jetValidator.compile({
+  type: "string",
+  format: "email",
+});
+
+validate("email@email.com"); // ✅ Valid
+validate("email"); // ❌ Invalid
+
+const jetValidator2 = new JetValidator({ validateFormats: false });
+
+const validate2 = jetValidator2.compile({
+  type: "string",
+  format: "email",
+});
+
+// The format keyword is ignored
+validate2("email@email.com"); // ✅ Valid
+validate2("email"); // ✅ Valid
+```
+
+## `formatMode`
+
+**Type:** `"full" | false | "fast"`
+**Default:** `"full"`
+
+The `formatMode` property controls the level of validation applied by the built-in format keywords loaded into the instance.
+
+| Value | Behavior |
+| --- | --- |
+| `"full"` | Loads **extensive and thorough** validation functions and regex patterns. This provides the highest guarantee of data correctness against the format specification. |
+| `"fast"` | Loads **quicker, simpler** validation functions and regex patterns. This prioritizes performance over complete specification compliance for certain complex formats. |
+| `false` | **No** built-in formats are loaded. Only custom formats explicitly added by the user will be available. |
+
+### Formats with a significant difference
+
+The difference between the `"full"` and `"fast"` settings is most pronounced in complex formats where the pattern can be highly extensive (e.g., matching the full RFC specification) versus a simpler, faster pattern.
+
+Using `"full"` or `"fast"` will load _different_ validators for the following formats:
+
+| Format Keyword | "full" Behavior | "fast" Behavior |
+| :--- | :--- | :--- |
+| **`date`** | Uses a **robust validator function**. | Uses a simpler function/regex. |
+| **`time`** | Uses a validator function with **strict time zone checking**. | Uses a simpler validator. |
+| **`date-time`** | Uses a validator function with **strict time zone checking**. | Uses a simpler validator. |
+| **`iso-time`** | Uses a **robust ISO 8601 time validator**. | Uses a simpler validator. |
+| **`iso-date-time`** | Uses a **robust ISO 8601 date-time validator**. | Uses a simpler validator. |
+| **`uri`** | Uses an **extensive, highly complex regex** to **fully comply with RFC 3986**. | Uses a **much simpler regex** for basic URI structure checks. |
+| **`uri-reference`** | Uses an **extensive, highly complex regex**. | Uses a **much simpler regex**. |
+
+### Formats with minimal difference
+
+For the following formats, the difference in speed between simple and complete patterns was found to be negligible. Therefore, both `"full"` and `"fast"` load the **same, reliable, and complete validator** for these formats:
+
+`email`, `ipv4`, `ipv6`, `uuid`, `hostname`, `url`, `uri-template`, `duration`, `json-pointer`, `json-pointer-uri-fragment`, `relative-json-pointer`, `byte`, `regex`, `int32`, `int64`, `idn-email`, `idn-hostname`, `iri`, `iri-reference`.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ formatMode: "full" }); // or false | 'fast'
+
+const validate = jetValidator.compile({
+  type: "string",
+  format: "email", // uses full
+});
+
+validate("email@email.com"); // ✅ Valid
+validate("email"); // ❌ Invalid
+```
+
+## `allowFormatOverride`
+
+**Type:** `boolean`
+**Default:** `false`
+
+When set to **`true`**, this property allows **custom formats** to replace or override the existing built-in formats loaded into the instance.
+
+This is useful when you need to introduce custom validation logic for a standard format keyword (like `email` or `date-time`) that is more specific or tailored to your application's requirements than the default built-in validator. If set to `false`, attempting to add a custom format with the same name as a built-in one will usually result in an error or the custom format being ignored.
+
+**Quick Example:**
+
+```typescript
+const jetValidator = new JetValidator({ allowFormatOverride: true });
+
+const validate = jetValidator.compile({
+  type: "string",
+  format: "email",
+});
+
+jetValidator.addFormat("email", /regex/); // succeeds — built-in email format is replaced.
+
+// allowFormatOverride: false
+jetValidator.addFormat("email", /regex/); // throws error.
+```

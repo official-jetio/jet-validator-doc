@@ -1,0 +1,93 @@
+---
+title: "Configuration Overview"
+description: "The JetValidator constructor and the full ValidatorOptions interface, with pointers to where each option is documented."
+---
+
+# Configuration Overview
+
+## Configuration Options
+
+### Constructor
+
+```typescript
+import { JetValidator } from "@jetio/validator";
+
+const jetValidator = new JetValidator(options);
+```
+
+### Available Options
+
+@jetio/validator accepts a configuration object with the following options. All options are optional and have sensible defaults.
+
+```typescript
+interface ValidatorOptions {
+  // debugging
+  logFunction?: boolean;
+
+  // code generation
+  loopEnum?: number;
+  loopRequired?: number;
+
+  // $ref options
+  draft?: "draft2019-09" | "draft2020-12" | "draft7" | "draft6";
+  inlineRefs?: boolean;
+  debug?: boolean;
+
+  // Error Handling
+  allErrors?: boolean;
+  verbose?: boolean;
+
+  // Validation Strictness
+  strict?: boolean;
+  strictNumbers?: boolean;
+  strictRequired?: boolean;
+  strictTypes?: boolean | "log";
+  strictSchema?: boolean;
+
+  // Data Modification
+  coerceTypes?: boolean | "array";
+  removeAdditional?: boolean | "all";
+  useDefaults?: boolean | "empty";
+
+  // Performance
+  cache?: boolean;
+
+  // Metaschema & Schema
+  metaSchema?: string;
+  validateSchema?: boolean;
+  addUsedSchema?: boolean;
+  loadSchema?: (uri: string) => Promise<SchemaDefinition> | SchemaDefinition;
+
+  // Custom errors
+  errorMessage?: boolean;
+
+  // Advanced
+  $data?: boolean;
+  async?: boolean;
+
+  // Formats
+  validateFormats?: boolean;
+  allowFormatOverride?: boolean;
+  formatMode?: "full" | false | "fast";
+  formats?: string[];
+  overwrittenFormats?: string[]; // standalone code generation
+}
+```
+
+---
+
+## Where Each Option Is Documented
+
+| Group | Options | Page |
+| --- | --- | --- |
+| Debugging | `logFunction` | [Refs & Debugging](/configuration/refs-and-debugging) |
+| Code generation | `loopEnum`, `loopRequired` | [Standalone Code Generation](/standalone/basics) |
+| `$ref` & analytics | `draft`, `inlineRefs`, `debug` | [Refs & Debugging](/configuration/refs-and-debugging) |
+| Error handling | `allErrors`, `errorMessage`, `verbose` | [Error Handling](/configuration/error-handling) |
+| Strictness | `strict`, `strictNumbers`, `strictRequired`, `strictTypes`, `strictSchema` | [Strictness](/configuration/strictness) |
+| Data modification | `coerceTypes`, `removeAdditional`, `useDefaults` | [Data Modification](/configuration/data-modification) |
+| Performance | `cache` | [Performance](/configuration/performance) |
+| Metaschema & schema | `metaSchema`, `validateSchema`, `addUsedSchema`, `loadSchema` | [Metaschema](/configuration/metaschema) |
+| Advanced | `$data`, `async` | [Advanced](/configuration/advanced) |
+| Formats | `formats`, `validateFormats`, `formatMode`, `allowFormatOverride` | [Formats](/configuration/formats) |
+| Standalone formats | `overwrittenFormats` | [Format Handling](/standalone/formats) |

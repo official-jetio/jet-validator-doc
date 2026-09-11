@@ -3,11 +3,11 @@ title: "Custom Error Messages"
 description: "Schema-level and parent-level custom error messages, the three lookup levels, and error format."
 ---
 
+import { Callout } from 'nextra/components'
+
 # Custom Error Messages
 
 @jetio/validator has built-in support for custom error messages with no plugins required. It supports schema-level, parent-level, and root-level customization through a single, consistent resolution model.
-
-> **Upgrading from v1?** Error message resolution changed in 2.0. In v1, boundary and straying keywords refused to read a parent-level message — only messages defined inside the keyword or at the root resolved. 2.0 unifies this so every keyword also checks its parent level. Messages defined inside keywords or at the root behave identically; a parent-level message that was inert in v1 now activates. See [Upgrading to 2.0](/whats-new-2#error-messages-resolve-at-the-parent-level) for details.
 
 ---
 
@@ -15,7 +15,7 @@ description: "Schema-level and parent-level custom error messages, the three loo
 
 For schemas referenced via `$ref` or `$dynamicRef`, error messages must be defined **inside the referenced schema itself** — not in the referencing schema. This applies to both local and external references.
 
-JetValidator returns the full schema path when an error occurs inside a referenced schema:
+JetValidator returns the full schema path when an error occurs inside a referenced schema when `verbose` is set to `true` or `'path'`:
 
 ```typescript
 const error = {

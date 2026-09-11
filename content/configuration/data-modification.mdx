@@ -1,0 +1,431 @@
+---
+title: "Data Modification"
+description: "Options that mutate the data you validate: coerce types, remove additional properties, and apply defaults — plus root limits and order of operations."
+---
+
+import { Callout } from 'nextra/components'
+
+# Data Modification
+
+Three options make validation impure: `removeAdditional`, `useDefaults` and
+`coerceTypes`. All three **modify the object you pass in**. None of them can
+replace the root value itself, because JavaScript passes it by value. See
+[Root limits](#root-limits).
+
+<Callout type="warning">
+These options now modifies the data object, which is a breaking change from version 2.0.
+</Callout>
+
+---
+
+## `coerceTypes`
+
+**Type:** `boolean | "array"`
+**Default:** `false`
+
+Converts a value to the type its schema requires, writing the converted value
+back into the data.
+
+```typescript
+const validate = new JetValidator({ coerceTypes: true }).compile({
+  type: "object",
+  properties: {
+    age: { type: "number" },
+    name: { type: "string" },
+    active: { type: "boolean" },
+  },
+});
+
+const data = { age: "25", name: 42, active: "1" };
+validate(data); // true
+console.log(data); // { age: 25, name: "42", active: true }
+```
+
+When conversion is impossible, validation fails and the value is left as it was:
+
+```typescript
+const data = { age: "not a number" };
+validate(data); // false — validate.errors has a `type` error
+console.log(data); // { age: "not a number" }
+```
+
+### Coercion rules
+
+| from | to | result |
+|---|---|---|
+| `"42"`, `" 42 "` | number | `42` |
+| `true` / `false` | number | `1` / `0` |
+| `42` | string | `"42"` |
+| `true` | string | `"true"` |
+| `"true"`, `"1"` | boolean | `true` |
+| `"false"`, `"0"`, `""` | boolean | `false` |
+| non-zero number | boolean | `true` |
+| `0` | boolean | `false` |
+| any value | array | `[value]` (`"array"` mode only) |
+
+### `"array"`
+
+`"array"` is a superset of `true`. Every conversion above still applies, and two
+more are added: a scalar is wrapped into a single-element array when the schema
+wants an array, and a **single-element** array is unwrapped when the schema wants
+a scalar.
+
+```typescript
+const validate = new JetValidator({ coerceTypes: "array" }).compile({
+  type: "object",
+  properties: {
+    tags: { type: "array", items: { type: "string" } },
+    limit: { type: "number" },
+    active: { type: "boolean" },
+  },
+});
+
+const data = { tags: "urgent", limit: ["10"], active: ["false"] };
+validate(data); // true
+console.log(data); // { tags: ["urgent"], limit: 10, active: false }
+```
+
+Unwrapping happens first, so the normal table applies to the value inside:
+`["10"]` becomes `"10"` becomes `10`.
+
+Arrays with more than one element are never unwrapped, because there is no
+principled way to choose between the values:
+
+```typescript
+const data = { limit: ["10", "20"] };
+validate(data); // false — `type` error on /limit
+console.log(data); // { limit: ["10", "20"] } — unchanged
+```
+
+`null` wraps rather than being skipped: `{ tags: null }` becomes `{ tags: [null] }`,
+and the `items` schema then applies to that `null`.
+
+
+### Inside `oneOf` / `anyOf` / `not` / `if`
+
+**Warning.** Coercion runs before any branch decides anything, and is never
+undone. A branch that loses, or a predicate that fails, can leave a converted
+value behind:
+
+```typescript
+const validate = new JetValidator({ coerceTypes: true }).compile({
+  type: "object",
+  not: { properties: { n: { type: "number" } }, required: ["n"] },
+});
+
+const data = { n: "5" };
+validate(data);
+console.log(data); // { n: 5 } — the predicate converted it
+```
+
+Results also depend on branch order. Keep `coerceTypes` and logical applicators
+apart where you can, or accept that the output is whatever the last branch to
+touch the value produced.
+
+---
+
+## `removeAdditional`
+
+**Type:** `boolean | "all"`
+**Default:** `false`
+
+Deletes properties that the schema does not declare. Deletion is in place, so
+object identity is preserved and any reference you captured before validating
+sees the change.
+
+### When it fires
+
+| schema | `true` | `"all"` |
+|---|---|---|
+| `{type: "object"}` | never | never |
+| `additionalProperties: false` | fires | fires |
+| `properties` present | never | fires |
+| `properties` + `additionalProperties: false` | fires | fires |
+| `properties` + `additionalProperties: {schema}` | never | fires |
+| `patternProperties` only | never | never |
+
+`true` removes only when `additionalProperties` is explicitly `false`. `"all"`
+removes whenever the schema declares object shape, whatever `additionalProperties`
+says. A schema that declares no shape at all is left alone — `{type: "object"}`
+never empties your object.
+
+A property matched by `properties` **or** `patternProperties` is not additional
+and is never removed.
+
+### `true`
+
+```typescript
+const validate = new JetValidator({ removeAdditional: true }).compile({
+  type: "object",
+  properties: { name: { type: "string" } },
+  additionalProperties: false,
+});
+
+const data = { name: "Alice", age: 25, email: "alice@example.com" };
+validate(data); // true
+console.log(data); // { name: "Alice" }
+```
+
+Without `additionalProperties: false`, nothing is removed:
+
+```typescript
+const validate = new JetValidator({ removeAdditional: true }).compile({
+  type: "object",
+  properties: { name: { type: "string" } },
+});
+
+const data = { name: "Alice", age: 25 };
+validate(data); // true
+console.log(data); // { name: "Alice", age: 25 }
+```
+
+### `"all"`
+
+```typescript
+const validate = new JetValidator({ removeAdditional: "all" }).compile({
+  type: "object",
+  properties: { name: { type: "string" } },
+  patternProperties: { "^x-": { type: "string" } },
+  additionalProperties: { type: "number" },
+});
+
+const data = { name: "Alice", "x-trace": "abc", age: 25 };
+validate(data); // true
+console.log(data); // { name: "Alice", "x-trace": "abc" }
+```
+
+`age` goes even though `additionalProperties` would have accepted it. `x-trace`
+stays because `patternProperties` declares it.
+
+### In place, not replaced
+
+```typescript
+const validate = new JetValidator({ removeAdditional: true }).compile({
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: { id: { type: "number" } },
+      additionalProperties: false,
+    },
+  },
+});
+
+const user = { id: 1, junk: "x" };
+const data = { user };
+
+validate(data);
+console.log(data.user === user); // true
+console.log(user); // { id: 1 }
+```
+
+### Inside `oneOf` / `anyOf`
+
+**Warning.** Every branch is evaluated and each deletes relative to its own
+`properties`, so a losing branch can remove data a winning branch needed:
+
+```typescript
+const validate = new JetValidator({ removeAdditional: true }).compile({
+  type: "object",
+  oneOf: [
+    { properties: { foo: { type: "string" } }, required: ["foo"],
+      additionalProperties: false },
+    { properties: { bar: { type: "integer" } }, required: ["bar"],
+      additionalProperties: false },
+  ],
+});
+
+const data = { foo: "abc" };
+validate(data); // true
+console.log(data); // {} - branch 2 deleted foo before failing
+```
+
+Two ways to write it so this cannot happen. Hoist the shape above the `oneOf`
+and leave only `required` in the branches:
+
+```typescript
+{
+  type: "object",
+  properties: { foo: { type: "string" }, bar: { type: "integer" } },
+  additionalProperties: false,
+  oneOf: [{ required: ["foo"] }, { required: ["bar"] }],
+}
+```
+
+Or, when the branches constrain the same key differently and hoisting would
+weaken the schema, declare each branch's cousins as `true`:
+
+```typescript
+{
+  type: "object",
+  oneOf: [
+    { properties: { kind: { const: "a" }, value: { type: "string" }, other: true },
+      additionalProperties: false },
+    { properties: { kind: { const: "b" }, value: { type: "number" }, other: true },
+      additionalProperties: false },
+  ],
+}
+```
+
+`other: true` takes the key out of "additional" for that branch without
+constraining it.
+
+---
+
+## `useDefaults`
+
+**Type:** `boolean | "empty"`
+**Default:** `false`
+
+Assigns `default` values into the data for properties that are missing.
+Assignment happens **before** `required` and `minItems` are checked, so a default
+can satisfy them.
+
+```typescript
+const validate = new JetValidator({ useDefaults: true }).compile({
+  type: "object",
+  properties: {
+    status: { type: "string", default: "active" },
+    role: { type: "string", default: "user" },
+  },
+  required: ["status", "role"],
+});
+
+const data = { status: "inactive" };
+validate(data); // true
+console.log(data); // { status: "inactive", role: "user" }
+```
+
+Object and array defaults are cloned per validation, so two calls never share an
+instance.
+
+### Where defaults apply
+
+A `default` only does something where the schema names a slot the parent owns:
+
+- a key in `properties`
+- a position in `prefixItems`, or in the array form of `items` (draft2019 and earlier)
+
+```typescript
+const validate = new JetValidator({ useDefaults: true }).compile({
+  type: "array",
+  prefixItems: [{ type: "number" }, { type: "string", default: "z" }],
+  minItems: 2,
+});
+
+const data = [1];
+validate(data); // true
+console.log(data); // [1, "z"]
+```
+
+Everywhere else it is ignored, because there is no slot to assign to:
+
+| position | applied |
+|---|---|
+| `properties.x.default` | yes |
+| `prefixItems[i].default` / `items[i].default` | yes |
+| inside `allOf`, `then`, `else`, `dependentSchemas` | yes |
+| behind a `$ref` | no |
+| inside a property's own `allOf` | no |
+| under `patternProperties` / `additionalProperties` | no |
+| at the schema root | no |
+
+A `$ref`'d subschema is self-contained: its own defaults belong to whatever slot
+*it* declares, not to the slot that references it.
+
+### Conditional applicators are a compile error
+
+A default inside `oneOf`, `anyOf`, `not` or `if` is rejected at compile time.
+Applying it would change which branch matches, and which branch matches decides
+whether it should have been applied:
+
+```typescript
+new JetValidator({ useDefaults: true }).compile({
+  type: "object",
+  oneOf: [
+    { properties: { n: { type: "number", default: 1 } } },
+    { properties: { kind: { const: "b" } }, required: ["kind"] },
+  ],
+});
+// Error: "default" for "n" at #/oneOf/0 is inside oneOf/anyOf/not/if.
+```
+
+Move the default to the enclosing schema's `properties`. `then`, `else` and
+`elseIf[].then` are fine — the branch is already decided by the time they run.
+
+### `"empty"`
+
+Treats `undefined`, `null` and `""` as missing:
+
+```typescript
+const validate = new JetValidator({ useDefaults: "empty" }).compile({
+  type: "object",
+  properties: {
+    status: { type: "string", default: "active" },
+    count: { type: "number", default: 10 },
+  },
+});
+
+const data = { status: "", count: 0 };
+validate(data);
+console.log(data); // { status: "active", count: 0 }
+```
+
+`0` and `false` are untouched — only `undefined`, `null` and the empty string
+count as empty.
+
+---
+
+## Root limits
+
+None of the three options can change the root value itself. `validate(data)`
+receives a copy of the reference, so assigning to it inside the validator has no
+effect on your variable:
+
+```typescript
+const validate = new JetValidator({ coerceTypes: true }).compile({
+  type: "number",
+});
+
+const root = "5";
+validate(root); // true — validation sees 5
+console.log(root); // "5" — your variable is unchanged
+```
+
+The same applies to a root `default`. Properties *of* the root object are fully
+modifiable; only the root binding is not.
+
+To normalise a scalar, wrap it:
+
+```typescript
+const box = { value: "5" };
+new JetValidator({ coerceTypes: true })
+  .compile({ type: "object", properties: { value: { type: "number" } } })(box);
+console.log(box.value); // 5
+```
+
+---
+
+## Order of operations
+
+Within one object, in this order:
+
+1. defaults assigned
+2. additional properties removed
+3. `minProperties` / `maxProperties`
+4. `required`
+5. everything else
+
+So a default can satisfy `required`, and property counts see the object *after*
+removal. For arrays, tuple defaults are assigned before `minItems` and
+`maxItems`.
+
+Mutations are applied as validation proceeds. If a later check fails, earlier
+mutations stay applied — a failed validation can still leave the data changed.
+
+How much stays applied depends on `allErrors`. In fail-fast mode the first error
+returns immediately, so anything after it never runs; with `allErrors: true` the
+whole schema is walked and later mutations still land. The verdict is identical
+either way — only the error list and the amount of mutation differ. If you need
+the same output shape regardless of mode, validate before you rely on the data,
+and discard it on failure.

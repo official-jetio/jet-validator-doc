@@ -1,0 +1,61 @@
+---
+title: "Performance"
+description: "Cache compiled validator functions to avoid recompiling the same schema."
+---
+
+# Performance
+
+## `cache`
+
+**Type:** `boolean`
+**Default:** `true`
+
+Caches compiled validator functions to avoid recompilation. When enabled, compiling the same schema multiple times returns the cached function.
+
+```typescript
+const jetValidator = new JetValidator({ cache: true });
+
+const schema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+  },
+};
+
+// First compilation - generates validator function
+const validate1 = jetValidator.compile(schema);
+
+// Second compilation - returns cached function (instant)
+const validate2 = jetValidator.compile(schema);
+
+console.log(validate1 === validate2); // true
+```
+
+**Caching by schema ID:**
+
+```typescript
+const schema1 = {
+  $id: "user-schema",
+  type: "object",
+  properties: { name: { type: "string" } },
+};
+
+jetValidator.compile(schema1);
+// Cached with key: 'user-schema'
+
+jetValidator.compile(schema1);
+// Returns cached validator instantly
+```
+
+**Disable caching for dynamic schemas:**
+
+```typescript
+const jetValidator = new JetValidator({ cache: false });
+// Useful when schemas are generated dynamically
+// and won't be reused
+```
+
+**Performance impact:**
+
+- With caching: ~0.01ms for cached lookups
+- Without caching: &lt;1ms per compilation (higher depending on schema complexity)

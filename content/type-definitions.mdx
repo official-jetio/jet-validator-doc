@@ -159,16 +159,19 @@ interface ValidatorOptions {
   formatMode?: "full" | "fast" | false; // Format validation mode
   formats?: string[]; // formats to include in stand alone generation
   overwrittenFormats?: string[]; // inbuilt formats that were overriden in stand alone generation
+  allowFormatOverride?: boolean;
 
   // Code generation
   async?: boolean; // Generate async validators
   inlineRefs?: boolean; // Inline $ref schemas
   $data?: boolean; // Support $data references
+  loopEnum?: number; // Unroll enum loops threshold
+  loopRequired?: number; // Unroll required loops threshold
 
-  // Type coercion
+  // Data modification
   coerceTypes?: boolean | "array"; // Coerce types
   useDefaults?: boolean | "empty"; // Use default values
-  removeAdditional?: boolean | "all" | "failing"; // Remove additional properties
+  removeAdditional?: boolean | "all"; // Remove additional properties
 
   // Strict mode
   strict?: boolean; // Strict mode
@@ -178,8 +181,7 @@ interface ValidatorOptions {
 
   // Performance
   cache?: boolean; // Cache compiled validators
-  loopEnum?: number; // Unroll enum loops threshold
-  loopRequired?: number; // Unroll required loops threshold
+  
 
   // External schemas
   loadSchema?: (uri: string) => Promise<SchemaDefinition> | SchemaDefinition;
@@ -187,7 +189,7 @@ interface ValidatorOptions {
 
   // Debugging
   debug?: boolean; // Enable debug logging
-  verbose?: boolean; // Verbose error messages
+  verbose?: boolean | "value" | "path"; // Verbose error messages
   logFunction?: boolean; // Log generated functions
 
   // Extensions
@@ -222,7 +224,7 @@ if (!isValid) {
   // [
   //   {
   //     dataPath: "/age",
-  //     schemaPath: "#/properties/age/minimum",
+  //     schemaPath: "#/properties/age",
   //     keyword: "minimum",
   //     value: -5,
   //     expected: 0,
@@ -239,7 +241,7 @@ Return type for `validate` and `validateAsync` custom keywords.
 ```typescript
 interface ValidationResult {
   valid: boolean;
-  errors?: ValidationError[];
+  errors: null | ValidationError[];
 }
 ```
 
@@ -251,7 +253,7 @@ Type for compiled validation functions with attached errors.
 type ValidationFunction = (data: any) => boolean;
 
 type ErrorAttachedValidatorFn = ValidationFunction & {
-  errors: ValidationError[];
+  errors: null | ValidationError[];
 };
 ```
 
@@ -294,8 +296,8 @@ interface MacroKeywordDefinition extends KeywordDefinition {
   macro: MacroFunction;
 }
 
-type MacroFunction<TValue = unknown> = (
-  schemaValue: TValue, // The keyword's value
+type MacroFunction = (
+  schemaValue: any, // The keyword's value
   parentSchema: SchemaDefinition, // Full schema
   context?: MacroContext, // Compilation context
 ) => SchemaDefinition | boolean; // Returns expanded schema
@@ -335,28 +337,28 @@ interface CompileKeywordDefinition extends KeywordDefinition {
   compile: CompileFunction;
 }
 
-type CompileFunction<TValue = unknown, TData = unknown, TRootData = unknown> = (
-  schemaValue: TValue,
+type CompileFunction = (
+  schemaValue: any,
   parentSchema: SchemaDefinition,
-  context: CompileContext,
-) => CompiledValidateFunction<TData, TRootData>;
+  context: CompileKeywordContext,
+) => CompiledValidateFunction;
 
-interface CompileContext {
+interface CompileKeywordContext {
   schemaPath: string;
   rootSchema: SchemaDefinition;
   opts: ValidatorOptions;
 }
 
-type CompiledValidateFunction<TData = unknown, TRootData = unknown> = (
-  data: TData,
-  rootData: TRootData,
+type CompiledValidateFunction = (
+  data: any,
+  rootData: any,
   dataPath: string,
 ) =>
   | boolean
   | KeywordValidationError
   | Promise<boolean | KeywordValidationError>;
 
-interface ValidationError {
+interface KeywordValidationError {
   message: string;
   [key: string]: any;
 }
@@ -371,25 +373,21 @@ interface ValidateKeywordDefinition extends KeywordDefinition {
   validate: ValidateFunction;
 }
 
-type ValidateFunction<
-  TValue = unknown,
-  TData = unknown,
-  TRootData = unknown,
-> = (
-  schemaValue: TValue,
-  data: TData,
+type ValidateFunction = (
+  schemaValue: any,
+  data: any,
   parentSchema: SchemaDefinition,
-  dataContext: ValidateDataContext<TRootData>,
+  dataContext: ValidateDataContext,
 ) =>
   | boolean
   | KeywordValidationError
   | Promise<boolean | KeywordValidationError>;
 
-interface ValidateDataContext<TRootData = unknown> {
+interface ValidateDataContext {
   dataPath: string;
-  rootData: TRootData;
+  rootData: any;
   schemaPath: string;
-  parentData?: unknown;
+  parentData?: any;
   parentDataProperty?: string | number;
 }
 
@@ -421,25 +419,31 @@ interface CodeKeywordDefinition extends KeywordDefinition {
   code: CodeFunction;
 }
 
-type CodeFunction<TValue = unknown> = (
-  schemaValue: TValue,
+type CodeFunction = (
+  schemaValue: any,
   parentSchema: SchemaDefinition,
   context: CodeContext,
 ) => string;
+
+type AccessSegment =
+  | { kind: "key"; value: string }
+  | { kind: "index"; value: number }
+  | { kind: "dynamic"; expr: string };
 
 interface CodeContext {
   dataVar: string; // Variable name for current data (e.g., "var1")
   dataPath: string; // Path to data (e.g., "/user/email")
   schemaPath: string; // Path in schema
-  accessPattern?: string; // Full access pattern (e.g., "var1['email']")
-  errorVariable?: string; // "allErrors" or undefined (for allErrors mode)
+  fullAccess: ReadonlyArray<AccessSegment> // full access pattern from root with their type 
+  rootDataVar: string; // 'data' if in ref, 'rootData' if in main function
+  errorVariable: string; 
   allErrors: boolean; // Whether allErrors is enabled
-  functionName: string; // Name of the validation function
+  functionName: string; // Name of the validation function (changes if inside a $ref function)
   // validation utilities
-  extra: Extra;
-  buildError(error: codeError): string;
-  addEvaluatedProperty(prop: any): string;
-  addEvaluatedItem(item: any): string;
+  resolveDataPointer: (pointer: string) => string; // resolve $data pointers
+  buildError(error: KeywordValidationError): string; // builds error and inject into code
+  addEvaluatedProperty(prop: string): string; // track unevaluatedItems
+  addEvaluatedItem(item: number): string; // track unevaluatedProperties
 }
 ```
 
@@ -454,12 +458,13 @@ jetvalidator.addKeyword({
 
     return `
       if (${context.dataVar} % 2 !== 0) {
-        ${context.functionName}.errors = [{
+        ${context.errorVariable} ??= []; // Error variable is null if no error has been collected
+        ${context.errorVariable}.push({
           dataPath: "${context.dataPath}",
           schemaPath: "${context.schemaPath}",
           keyword: "isEven",
           message: "Number must be even"
-        }];
+        });
         return false;
       }
     `;
@@ -469,8 +474,8 @@ jetvalidator.addKeyword({
 
 **Important for Code Keywords:**
 
-- Must handle `allErrors` mode by checking `context.allErrors`
-- Use `context.errorVariable` when `allErrors` is `true`
+- Must handle `allErrors` mode by checking `context.allErrors` so you know when to return on error or just collect and continue
+- `context.errorVariable` is available whether `allErrors` is `true` or not, the difference `allErrors` mode is that you don't return on error.
 - Return early with `return false` when `allErrors` is `false`
 - Generate clean, optimized JavaScript code
 

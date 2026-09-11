@@ -47,7 +47,7 @@ const badSchema = {
   },
 };
 
-jetValidator.validateSchema(badSchema); // false
+jetValidator.validateSchemaSync(badSchema).valid; // false
 ```
 
 **2. Prevent invalid configurations**
@@ -58,7 +58,7 @@ const invalidSchema = {
   minimum: "10", // String instead of number
 };
 
-jetValidator.validateSchema(invalidSchema); // false
+jetValidator.validateSchemaSync(invalidSchema).valid; // false
 ```
 
 **3. Enforce draft compatibility**
@@ -71,7 +71,7 @@ const incompatibleSchema = {
   unevaluatedProperties: false, // Only in 2019-09+
 };
 
-jetValidator.validateSchema(incompatibleSchema); // false
+jetValidator.validateSchemaSync(incompatibleSchema).valid; // false
 ```
 
 ---

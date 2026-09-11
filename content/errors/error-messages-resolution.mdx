@@ -7,8 +7,6 @@ description: "The unified error message resolution model: the three lookup level
 
 This is the core page for understanding how custom error messages resolve. Everything else follows from these rules.
 
-> **v2 note:** In v2 the resolution model is fully unified. There are no boundary keywords with special behavior anymore — `anyOf`, `then`, `else`, `properties`, etc. all resolve the same way. The old "alt path" concept no longer exists.
-
 ---
 
 ## The Three Lookup Levels
@@ -261,13 +259,13 @@ const schema = {
           // then resolves from parent (one level down)
           _jetError: "Business rule failed", // covers then's type + required
           properties: {
-            c: "Field c must be null", // c targeted, one level down
+            c: "Field c must be null", // c not reached, two levels down ❌
           },
         },
         anyOf: ["Inner anyOf branch 0 failed"], // indexed form for this branch's own anyOf
         properties: {
           name: {
-            _jetError: "Name validation failed",
+            _jetError: "Name validation failed", // name reached, one level down
           },
         },
       },
