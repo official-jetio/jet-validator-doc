@@ -1,0 +1,15 @@
+---
+title: Playground
+description: Try @jetio/validator in your browser — configure options, load examples, and run your own code against a live validator.
+---
+
+import dynamic from 'next/dynamic'
+
+export const Playground = dynamic(
+  () => import('../src/components/playground/Playground').then((m) => m.Playground),
+  { ssr: false }
+)
+
+# Playground
+
+<Playground />

@@ -241,7 +241,7 @@ Return type for `validate` and `validateAsync` custom keywords.
 ```typescript
 interface ValidationResult {
   valid: boolean;
-  errors: null | ValidationError[];
+  errors?: null | ValidationError[];
 }
 ```
 
@@ -253,7 +253,7 @@ Type for compiled validation functions with attached errors.
 type ValidationFunction = (data: any) => boolean;
 
 type ErrorAttachedValidatorFn = ValidationFunction & {
-  errors: null | ValidationError[];
+  errors?: null | ValidationError[];
 };
 ```
 

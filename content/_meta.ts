@@ -1,5 +1,6 @@
 const meta = {
   index: "Introduction",
+  playground: "Playground",
   "whats-new-3": "Upgrading to 3.0",
   configuration: "Getting Started & Configuration",
   core: "Core API",

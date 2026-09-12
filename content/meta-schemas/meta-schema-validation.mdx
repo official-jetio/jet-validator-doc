@@ -27,7 +27,7 @@ validateSchemaAsync(
 | `options`            | `ValidatorOptions` | No       | Validation options                |
 | `options.metaSchema` | `string`           | No       | Override which meta-schema to use |
 
-**Returns:** `ValidationResult` — `{ valid: boolean, errors?: ValidationError }`
+**Returns:** `ValidationResult` — `{ valid: boolean, errors?: null | ValidationError }`
 
 **Behavior:** determines the meta-schema via the three-tier priority system, retrieves it from the registry, compiles it (cached if previously compiled), validates the input schema against it, and returns the result.
 

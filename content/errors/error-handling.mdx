@@ -10,7 +10,7 @@ description: "Inspect validation errors, hierarchical error trees, and utility m
 ```typescript
 interface ValidationResult {
   valid: boolean;
-  errors?: ValidationError[];
+  errors?: null | ValidationError[];
 }
 
 interface ValidationError {
